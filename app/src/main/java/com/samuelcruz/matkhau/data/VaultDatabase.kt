@@ -86,6 +86,18 @@ class VaultDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
         writableDatabase.delete("items", "id = ?", arrayOf(id))
     }
 
+    /** Thêm nhiều mục trong MỘT transaction (nhập CSV): hoặc vào hết, hoặc không mục nào. */
+    fun insertItems(items: List<StoredItem>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for (item in items) db.insertOrThrow("items", null, item.toValues())
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     /** Thay toàn bộ vault trong một transaction (dùng khi khôi phục backup): hoặc thành công hết, hoặc không đổi gì. */
     fun replaceVault(meta: Map<String, ByteArray>, items: List<StoredItem>) {
         val db = writableDatabase

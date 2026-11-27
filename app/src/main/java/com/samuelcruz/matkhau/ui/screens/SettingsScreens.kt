@@ -73,6 +73,9 @@ fun SettingsScreen(vm: VaultViewModel) {
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         vm.openBackupFile(context, uri)
     }
+    val csvLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        vm.openCsvFile(context, uri)
+    }
 
     AppScaffold(title = "Cài đặt", onBack = { vm.back() }) {
         SectionTitle("Khóa")
@@ -113,6 +116,12 @@ fun SettingsScreen(vm: VaultViewModel) {
             importLauncher.launch(arrayOf("*/*"))
         }
         Hint("Backup mở được bằng mật khẩu chính (hoặc Recovery Key) TẠI THỜI ĐIỂM xuất file. Hãy xuất backup định kỳ.")
+
+        SectionTitle("Chuyển từ app khác")
+        SettingRow("Nhập từ file CSV", "Bitwarden, Chrome / Google, Firefox, KeePass / KeePassXC…") {
+            vm.suspendAutoLock()
+            csvLauncher.launch(arrayOf("text/csv", "text/comma-separated-values", "text/plain", "application/csv", "*/*"))
+        }
 
         SectionTitle("Thông tin")
         SettingRow("Sức khỏe mật khẩu", "Mật khẩu yếu, dùng chung, lâu chưa đổi, thiếu 2FA") { vm.navigate(Screen.Health) }

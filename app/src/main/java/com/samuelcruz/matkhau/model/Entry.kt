@@ -14,6 +14,16 @@ data class CustomField(
     override fun toString(): String = "CustomField(name=$name)"   // không in giá trị
 }
 
+/**
+ * Ứng dụng Android được liên kết với mục để tự động điền: tên gói + SHA-256 chứng chỉ ký của nó lúc liên kết.
+ * App giả mạo cùng tên gói (cài ngoài) có chứng chỉ khác nên không được điền.
+ */
+@Serializable
+data class LinkedApp(
+    val packageName: String,
+    val certSha256: String,
+)
+
 /** Một mật khẩu cũ: [changedAt] = lúc nó bị thay bằng mật khẩu khác (spec 3.2). Mã hóa cùng mục. */
 @Serializable
 data class PasswordHistoryItem(
@@ -49,6 +59,8 @@ data class Entry(
     val passwordUpdatedAt: Long = 0L,
     /** Mật khẩu cũ, mới nhất trước, tối đa [MAX_HISTORY]. */
     val passwordHistory: List<PasswordHistoryItem> = emptyList(),
+    /** Thêm ở 0.3.0: app được phép tự động điền mục này (người dùng liên kết khi chọn mục lần đầu). */
+    val linkedApps: List<LinkedApp> = emptyList(),
 ) {
     /** data class tự sinh toString() in cả mật khẩu/TOTP/ghi chú: ghi đè để không bao giờ lộ qua log hay lỗi. */
     override fun toString(): String = "Entry(id=$id, type=$type)"

@@ -24,7 +24,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.samuelcruz.matkhau.core.health.HealthReport
 import com.samuelcruz.matkhau.core.health.PasswordHealth
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.samuelcruz.matkhau.model.Entry
 import com.samuelcruz.matkhau.ui.Screen
 import com.samuelcruz.matkhau.ui.VaultViewModel
@@ -38,10 +42,17 @@ import com.samuelcruz.matkhau.ui.components.Hint
 @Composable
 fun HealthScreen(vm: VaultViewModel) {
     val entries by vm.repository.entries.collectAsState()
-    val report = remember(entries) { PasswordHealth.analyze(entries, System.currentTimeMillis()) }
+    // Đo độ mạnh mọi mục có thể mất vài trăm ms với vault lớn: tính ngoài main thread.
+    val report by produceState<HealthReport?>(null, entries) {
+        value = withContext(Dispatchers.Default) { PasswordHealth.analyze(entries, System.currentTimeMillis()) }
+    }
     val open: (Entry) -> Unit = { vm.navigate(Screen.Detail(it.id)) }
 
     AppScaffold(title = "Sức khỏe mật khẩu", onBack = { vm.back() }) {
+        val report = report ?: run {
+            Hint("Đang phân tích…")
+            return@AppScaffold
+        }
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 val color = when {

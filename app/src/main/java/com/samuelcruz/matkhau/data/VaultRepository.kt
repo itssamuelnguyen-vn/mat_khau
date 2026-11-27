@@ -205,6 +205,29 @@ class VaultRepository(context: Context) {
         }
     }
 
+    /** Nhập nhiều mục (từ CSV) trong MỘT transaction; chỉ ghi nếu vault không bị khóa giữa chừng. */
+    suspend fun importEntries(list: List<Entry>) = withContext(Dispatchers.IO) {
+        writeMutex.withLock {
+            withSession { s ->
+                val existingIds = _entries.value.map { it.id }.toSet()
+                require(list.none { it.id in existingIds } && list.map { it.id }.toSet().size == list.size) { "Trùng id" }
+                val items = list.map { e ->
+                    val plain = json.encodeToString(Entry.serializer(), e).toByteArray(Charsets.UTF_8)
+                    try {
+                        val box = VaultCrypto.encryptItem(s.key, s.header.vaultId, e.id, plain)
+                        StoredItem(e.id, ITEM_FORMAT, box.nonce, box.ciphertext)
+                    } finally {
+                        Bytes.wipe(plain)
+                    }
+                }
+                commit(s.generation) {
+                    db.insertItems(items)
+                    _entries.value = sorted(_entries.value + list)
+                }
+            }
+        }
+    }
+
     suspend fun delete(id: String) = withContext(Dispatchers.IO) {
         writeMutex.withLock {
             withSession { s ->

@@ -15,6 +15,8 @@ import com.samuelcruz.matkhau.R
 import com.samuelcruz.matkhau.core.crypto.Bytes
 import com.samuelcruz.matkhau.core.crypto.DecryptionFailedException
 import com.samuelcruz.matkhau.core.format.FormatException
+import com.samuelcruz.matkhau.core.importer.CsvImportResult
+import com.samuelcruz.matkhau.core.importer.CsvImporter
 import com.samuelcruz.matkhau.core.vault.BackupFormat
 import com.samuelcruz.matkhau.core.vault.WrongSecretException
 import com.samuelcruz.matkhau.data.RestoredBackup
@@ -36,6 +38,9 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 
+/** File CSV lớn nhất được đọc (file xuất từ trình quản lý mật khẩu thường chỉ vài trăm KB). */
+private const val MAX_CSV_SIZE = 20 * 1024 * 1024
+
 /** Các màn hình khi vault ĐANG MỞ (điều hướng kiểu stack). */
 sealed interface Screen {
     data object VaultList : Screen
@@ -45,6 +50,7 @@ sealed interface Screen {
     data object Settings : Screen
     data object Security : Screen
     data object Health : Screen
+    data object ImportCsv : Screen
     data class ChangePassword(val forced: Boolean) : Screen
     /** [replacedUnconfirmed]: key cũ chưa được xác nhận đã chép nên app vừa tạo key mới thay thế. */
     data class ShowRecoveryKey(val key: String, val firstTime: Boolean, val replacedUnconfirmed: Boolean = false) : Screen
@@ -89,6 +95,14 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     var decryptedBackup by mutableStateOf<RestoredBackup?>(null)
         private set
 
+    /** Nhập CSV: kết quả đọc file chờ xác nhận (chứa mật khẩu dạng chữ: bỏ khi khóa / rời màn hình). */
+    var pendingImport by mutableStateOf<CsvImportResult?>(null)
+        private set
+    /** Số mục vừa nhập xong (null = chưa nhập) — để màn hình nhắc xóa file CSV. */
+    var importedCount by mutableStateOf<Int?>(null)
+        private set
+    private var importUri: Uri? = null
+
     var autoLockMillis by mutableStateOf(settings.autoLockMillis)
         private set
     var clipboardSeconds by mutableStateOf(settings.clipboardSeconds)
@@ -110,6 +124,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 stack = listOf(Screen.VaultList)
                 formError = null
                 clearBackupState()
+                clearImportState()
                 if (lockedScreen != LockedScreen.Create) {
                     lockedScreen = if (repository.initialized.value == false) LockedScreen.Welcome else LockedScreen.Unlock
                 }
@@ -132,6 +147,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         if (top is Screen.ChangePassword && top.forced) return true // bắt buộc đặt mật khẩu mới
         if (top is Screen.ShowRecoveryKey) return true // phải xác nhận đã chép key
         if (top is Screen.Restore) clearBackupState()
+        if (top is Screen.ImportCsv) clearImportState()
         stack = stack.dropLast(1)
         return true
     }
@@ -293,6 +309,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 favorite = existing.favorite,
                 passwordUpdatedAt = existing.passwordUpdatedAt,
                 passwordHistory = existing.passwordHistory,
+                linkedApps = existing.linkedApps,
             ).withPassword(draft.password, now)
             else -> draft.copy(updatedAt = now)
         }
@@ -539,6 +556,72 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             lockedScreen = LockedScreen.Unlock
             snackbar = "Đã khôi phục ${backup.entries.size} mục. Hãy mở khóa bằng mật khẩu của bản backup."
         }
+    }
+
+    // ------------------------------------------------------------------ nhập CSV
+
+    /** Đọc file CSV (Bitwarden, Chrome, Firefox, KeePass…), bỏ mục trùng, rồi mở màn xem trước. */
+    fun openCsvFile(context: Context, uri: Uri?) {
+        app.autoLock.resume()
+        if (uri == null) return
+        runBusy("Đang đọc file CSV…") {
+            val result = try {
+                val bytes = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { readAtMost(it, MAX_CSV_SIZE) }
+                        ?: throw FormatException("Không đọc được file")
+                }
+                val text = try {
+                    CsvImporter.decode(bytes)
+                } finally {
+                    bytes.fill(0)
+                }
+                withContext(Dispatchers.Default) {
+                    CsvImporter.import(text, repository.entries.value, System.currentTimeMillis()) {
+                        UUID.randomUUID().toString()
+                    }
+                }
+            } catch (e: FormatException) {
+                snackbar = "Không nhập được: ${e.message}"
+                return@runBusy
+            }
+            if (!repository.isUnlocked()) return@runBusy
+            pendingImport = result
+            importedCount = null
+            importUri = uri
+            navigate(Screen.ImportCsv)
+        }
+    }
+
+    fun confirmImport() {
+        val result = pendingImport ?: return
+        runBusy("Đang nhập ${result.entries.size} mục…") {
+            repository.importEntries(result.entries)   // một transaction
+            pendingImport = null
+            importedCount = result.entries.size
+        }
+    }
+
+    /** File CSV chứa mật khẩu không mã hóa: xóa ngay nếu nơi lưu cho phép. */
+    fun deleteImportedCsv(context: Context) {
+        val uri = importUri ?: return
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { android.provider.DocumentsContract.deleteDocument(context.contentResolver, uri) }.getOrDefault(false)
+            }
+            if (ok) importUri = null
+            snackbar = if (ok) "Đã xóa file CSV" else "Không xóa được từ app. Hãy xóa file CSV bằng trình quản lý file (và cả trong Thùng rác)."
+        }
+    }
+
+    fun finishImport() {
+        clearImportState()
+        stack = stack.filterNot { it == Screen.ImportCsv }.ifEmpty { listOf(Screen.VaultList) }
+    }
+
+    private fun clearImportState() {
+        pendingImport = null
+        importedCount = null
+        importUri = null
     }
 
     private fun clearBackupState() {
