@@ -1,0 +1,200 @@
+package com.samuelcruz.matkhau.ui.components
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.dp
+import com.samuelcruz.matkhau.core.generator.Strength
+import com.samuelcruz.matkhau.core.generator.StrengthEstimator
+
+/** Khung chung cho mọi màn hình: thanh tiêu đề, nút back, nội dung cuộn được. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AppScaffold(
+    title: String,
+    onBack: (() -> Unit)? = null,
+    actions: @Composable () -> Unit = {},
+    floatingActionButton: @Composable () -> Unit = {},
+    scrollable: Boolean = true,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(title) },
+                navigationIcon = {
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Quay lại")
+                        }
+                    }
+                },
+                actions = { actions() },
+            )
+        },
+        floatingActionButton = floatingActionButton,
+    ) { padding ->
+        val base = Modifier
+            .padding(padding)
+            .fillMaxSize()
+            .imePadding()
+        Column(
+            modifier = if (scrollable) base.verticalScroll(rememberScrollState()).padding(16.dp) else base,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            content = content,
+        )
+    }
+}
+
+/** Ô nhập bí mật: ẩn ký tự, kiểu bàn phím password (bàn phím không học/gợi ý từ). */
+@Composable
+fun SecretField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier,
+    imeAction: ImeAction = ImeAction.Done,
+    monospace: Boolean = false,
+    trailingExtra: @Composable () -> Unit = {},
+) {
+    var visible by remember { mutableStateOf(false) }
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        singleLine = true,
+        modifier = modifier.fillMaxWidth(),
+        visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = imeAction),
+        textStyle = if (monospace) MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace) else MaterialTheme.typography.bodyLarge,
+        trailingIcon = {
+            Row {
+                trailingExtra()
+                IconButton(onClick = { visible = !visible }) {
+                    Icon(
+                        if (visible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                        contentDescription = if (visible) "Ẩn" else "Hiện",
+                    )
+                }
+            }
+        },
+    )
+}
+
+/** Thanh độ mạnh mật khẩu (ước lượng thô). */
+@Composable
+fun StrengthMeter(password: String) {
+    if (password.isEmpty()) return
+    val strength = StrengthEstimator.estimate(password)
+    val bits = StrengthEstimator.estimateBits(password).toInt()
+    val color = when (strength) {
+        Strength.VERY_WEAK, Strength.WEAK -> Color(0xFFD32F2F)
+        Strength.FAIR -> Color(0xFFF9A825)
+        Strength.STRONG, Strength.VERY_STRONG -> Color(0xFF2E7D32)
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        LinearProgressIndicator(
+            progress = { (strength.ordinal + 1) / Strength.entries.size.toFloat() },
+            color = color,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text("Độ mạnh: ${strength.label} (~$bits bit, ước lượng)", style = MaterialTheme.typography.bodySmall, color = color)
+    }
+}
+
+/** Một dòng thông tin có nút copy (và tùy chọn che giấu). */
+@Composable
+fun FieldRow(
+    label: String,
+    value: String,
+    secret: Boolean = false,
+    monospace: Boolean = false,
+    onCopy: (() -> Unit)? = null,
+) {
+    if (value.isEmpty()) return
+    var revealed by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                text = if (secret && !revealed) "•".repeat(minOf(value.length, 16)) else value,
+                style = MaterialTheme.typography.bodyLarge.let { if (monospace || (secret && revealed)) it.copy(fontFamily = FontFamily.Monospace) else it },
+            )
+        }
+        if (secret) {
+            IconButton(onClick = { revealed = !revealed }) {
+                Icon(if (revealed) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, contentDescription = "Hiện/ẩn")
+            }
+        }
+        if (onCopy != null) {
+            IconButton(onClick = onCopy) { Icon(Icons.Filled.ContentCopy, contentDescription = "Copy $label") }
+        }
+    }
+}
+
+@Composable
+fun ErrorText(text: String?) {
+    if (text.isNullOrBlank()) return
+    Text(text, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+}
+
+@Composable
+fun SectionTitle(text: String) {
+    Spacer(Modifier.height(4.dp))
+    Text(text, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+}
+
+@Composable
+fun Hint(text: String) {
+    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+val ScreenPadding = PaddingValues(16.dp)
+
+@Composable
+fun CenteredBox(content: @Composable () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { content() }
+}
+
+@Composable
+fun HSpace(w: Int) = Spacer(Modifier.width(w.dp))
