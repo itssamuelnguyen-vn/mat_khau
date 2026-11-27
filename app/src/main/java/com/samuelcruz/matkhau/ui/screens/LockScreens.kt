@@ -48,6 +48,9 @@ import com.samuelcruz.matkhau.ui.components.ErrorText
 import com.samuelcruz.matkhau.ui.components.Hint
 import com.samuelcruz.matkhau.ui.components.SecretField
 import com.samuelcruz.matkhau.ui.components.StrengthMeter
+import com.samuelcruz.matkhau.ui.components.sensitive
+import com.samuelcruz.matkhau.security.AccessibilityGuard
+import androidx.lifecycle.compose.LifecycleResumeEffect
 
 const val MIN_MASTER_PASSWORD_LENGTH = 12
 
@@ -132,6 +135,22 @@ fun UnlockScreen(vm: VaultViewModel) {
             AppLogo()
             Text("Vault đang khóa", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
         }
+        // Cảnh báo ngay nơi gõ mật khẩu chính: app Trợ năng lạ / bàn phím lạ.
+        val context = LocalContext.current
+        var risky by remember { mutableStateOf(AccessibilityGuard.riskyServices(context)) }
+        var keyboard by remember { mutableStateOf(AccessibilityGuard.keyboard(context)) }
+        LifecycleResumeEffect(Unit) {   // đọc lại khi quay về từ Cài đặt máy
+            risky = AccessibilityGuard.riskyServices(context)
+            keyboard = AccessibilityGuard.keyboard(context)
+            onPauseOrDispose { }
+        }
+        if (risky.isNotEmpty()) {
+            // Ghi cả tên gói: trojan có thể tự đặt tên hiển thị là "TalkBack".
+            ErrorText("⚠ App đang có quyền Trợ năng: ${risky.joinToString { "${it.label} (${it.packageName})" }}. Nếu không phải bạn bật, đừng nhập mật khẩu chính; hãy tắt nó trong Cài đặt → Trợ năng.")
+        }
+        keyboard?.takeIf { !it.trusted }?.let { kb ->
+            ErrorText("⚠ Bàn phím \"${kb.label}\" (${kb.packageName}) không phải bàn phím hệ thống: nó thấy được mật khẩu bạn gõ. Nên mở bằng vân tay.")
+        }
         SecretField(password, { password = it }, "Mật khẩu chính")
         ErrorText(vm.formError)
         Button(
@@ -197,7 +216,7 @@ fun ShowRecoveryKeyScreen(vm: VaultViewModel, recoveryKey: String, firstTime: Bo
             },
             style = MaterialTheme.typography.titleMedium,
         )
-        Card(Modifier.fillMaxWidth()) {
+        Card(Modifier.fillMaxWidth().sensitive()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 recoveryKey.split("-").chunked(2).forEach { pair ->
                     Text(

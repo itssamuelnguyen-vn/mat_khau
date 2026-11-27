@@ -28,6 +28,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.drop
 import androidx.lifecycle.lifecycleScope
 import com.samuelcruz.matkhau.core.autofill.TrustedBrowsers
+import com.samuelcruz.matkhau.security.AccessibilityGuard
+import com.samuelcruz.matkhau.security.SecretGuard
 
 /**
  * Màn hình của tự động điền, hệ thống mở khi người dùng chọn một dòng đề xuất (hoặc khi lưu đăng nhập):
@@ -54,6 +56,7 @@ class AutofillActivity : FragmentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) window.setHideOverlayWindows(true)
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        AccessibilityGuard.protectWindow(this)
         vm.hostIsAutofill = true
 
         when (intent.getStringExtra(EXTRA_MODE)) {
@@ -117,13 +120,25 @@ class AutofillActivity : FragmentActivity() {
         app.autoLock.onUserInteraction()
     }
 
-    /** Trả giá trị về cho hệ thống để điền vào app / trang kia. false nếu mục không có gì để điền vào form này. */
-    private fun fill(entry: Entry): Boolean {
+    /**
+     * Trả giá trị về cho hệ thống để điền vào app / trang kia. false nếu mục không có gì để điền vào form này.
+     * Tùy chọn "xác thực mỗi lần" bật => hỏi vân tay trước (hủy => không điền, đóng màn hình).
+     */
+    private fun fill(entry: Entry, afterAuth: () -> Unit = {}): Boolean {
         val s = screen ?: return false
         val dataset = buildDataset(this, s, entry) ?: return false
-        setResult(RESULT_OK, Intent().putExtra(AutofillManager.EXTRA_AUTHENTICATION_RESULT, dataset))
-        finish()
+        SecretGuard.run(this, "Điền “${entry.title}”", onDenied = { finish() }) {
+            afterAuth()   // vd. lưu liên kết app / URL: chỉ khi người dùng đã xác thực xong
+            setResult(RESULT_OK, Intent().putExtra(AutofillManager.EXTRA_AUTHENTICATION_RESULT, dataset))
+            finish()
+        }
         return true
+    }
+
+    override fun onContentChanged() {
+        super.onContentChanged()
+        // Chỉ công cụ Trợ năng thật đọc / thao tác được màn hình này (Android 14+).
+        AccessibilityGuard.protectWindow(this)
     }
 
     private fun linkAndFill(entry: Entry): Boolean {
@@ -132,14 +147,12 @@ class AutofillActivity : FragmentActivity() {
         val updated = entry.copy(
             linkedApps = entry.linkedApps.filterNot { it.packageName == target.packageName } + LinkedApp(target.packageName, cert),
         )
-        saveInBackground(updated, "Chưa lưu được liên kết (vault đã khóa?). Lần sau hãy liên kết lại.")
-        return fill(updated)
+        return fill(updated) { saveInBackground(updated, "Chưa lưu được liên kết (vault đã khóa?). Lần sau hãy liên kết lại.") }
     }
 
     private fun setUrlAndFill(entry: Entry, url: String): Boolean {
         val updated = entry.copy(url = url)
-        saveInBackground(updated, "Chưa lưu được URL cho mục (vault đã khóa?)")
-        return fill(updated)
+        return fill(updated) { saveInBackground(updated, "Chưa lưu được URL cho mục (vault đã khóa?)") }
     }
 
     /** Người dùng xác nhận trình duyệt: ghim chứng chỉ, từ giờ tin tên miền nó báo. */

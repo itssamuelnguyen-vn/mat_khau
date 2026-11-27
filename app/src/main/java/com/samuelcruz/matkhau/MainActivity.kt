@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.fragment.app.FragmentActivity
+import com.samuelcruz.matkhau.security.AccessibilityGuard
 import com.samuelcruz.matkhau.ui.AppRoot
 import com.samuelcruz.matkhau.ui.VaultViewModel
 import com.samuelcruz.matkhau.ui.theme.MatKhauTheme
@@ -32,6 +33,13 @@ class MainActivity : FragmentActivity() {
                 AppRoot(vm)
             }
         }
+        // Chỉ công cụ Trợ năng thật (TalkBack...) đọc / thao tác được màn hình của vault (Android 14+).
+        AccessibilityGuard.protectWindow(this)
+    }
+
+    override fun onContentChanged() {
+        super.onContentChanged()
+        AccessibilityGuard.protectWindow(this)   // gắn lại cho view nội dung vừa được setContent tạo ra
     }
 
     /** Activity không bị tạo lại khi đổi chế độ sáng/tối (configChanges), nên tự cập nhật màu icon thanh hệ thống. */

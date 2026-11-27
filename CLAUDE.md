@@ -141,6 +141,18 @@ ui/           VaultViewModel (screen stack + all actions), AppRoot (router), scr
     editable (two-step logins).
   - `VaultViewModel.hostIsAutofill` skips the forced flows there; the main app runs them via `ensureForcedFlows()`
     on every unlock and every resume.
+- **Accessibility trojans:** Android 14+ marks the windows `setAccessibilityDataSensitive(YES)`
+  (`AccessibilityGuard.protectWindow`, re-applied in `onContentChanged`) and every composable showing secrets uses
+  `Modifier.sensitive()` (Compose `isSensitiveData`), so only `isAccessibilityTool` services (TalkBack…) can read or
+  act. `isAccessibilityTool` is self-declared (only Play checks it), so a sideloaded trojan can claim it: every
+  enabled service that is not a system app, or not (from a known store AND declared tool), counts as risky; the
+  Security + Unlock screens list them with package names, and while any exists `SecretGuard` is enforced even if the
+  option is off. Dialogs are separate windows: their content calls `SensitiveWindow()`. Also warns on a non-system
+  keyboard. Known gap: text-field selection "Copy" of a revealed value bypasses SecureClipboard.
+  Optional `AppSettings.requireAuthForSecrets`: `SecretGuard` asks for biometric (device credential only when no
+  biometric is enrolled) before reveal, copy of a secret, opening Edit, un-hiding a field, or an autofill fill (30 s
+  grace, reset on lock, action dropped if the vault locked during the prompt; switching it off always prompts). Components get
+  the gate through `LocalSecretGuard`.
 - **CSV import:** preview, then one transaction (`VaultDatabase.insertItems`); the plaintext preview is dropped on
   lock / back; afterwards the user is pushed to delete the CSV file.
 

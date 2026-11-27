@@ -51,6 +51,7 @@ import com.samuelcruz.matkhau.ui.components.ErrorText
 import com.samuelcruz.matkhau.ui.components.Hint
 import com.samuelcruz.matkhau.ui.components.SecretField
 import com.samuelcruz.matkhau.ui.components.SectionTitle
+import com.samuelcruz.matkhau.ui.components.LocalSecretGuard
 
 /** Dữ liệu form chỉ nằm trong `remember` (RAM), không ghi vào savedInstanceState. */
 private class FieldDraft(name: String, value: String, hidden: Boolean) {
@@ -79,6 +80,7 @@ fun EntryEditScreen(vm: VaultViewModel, id: String?, initialType: EntryType) {
         }
     }
     var showGenerator by remember { mutableStateOf(false) }
+    val guard = LocalSecretGuard.current
 
     // Quét QR 2FA: chỉ xin quyền CAMERA khi bấm nút quét.
     val context = LocalContext.current
@@ -164,7 +166,7 @@ fun EntryEditScreen(vm: VaultViewModel, id: String?, initialType: EntryType) {
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                 modifier = Modifier.fillMaxWidth(),
             )
-            SecretField(password, { password = it }, "Mật khẩu", monospace = true, trailingExtra = {
+            SecretField(password, { password = it }, "Mật khẩu", monospace = true, guarded = true, trailingExtra = {
                 IconButton(onClick = { showGenerator = true }) { Icon(Icons.Filled.AutoAwesome, "Tạo mật khẩu") }
             })
             TrackedTextField(
@@ -172,7 +174,7 @@ fun EntryEditScreen(vm: VaultViewModel, id: String?, initialType: EntryType) {
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 modifier = Modifier.fillMaxWidth(),
             )
-            SecretField(totp, { totp = it }, "Secret TOTP (2FA)", monospace = true, trailingExtra = {
+            SecretField(totp, { totp = it }, "Secret TOTP (2FA)", monospace = true, guarded = true, trailingExtra = {
                 IconButton(onClick = { startScan() }) { Icon(Icons.Filled.QrCodeScanner, "Quét mã QR") }
             })
             if (totpInvalid) {
@@ -212,12 +214,13 @@ fun EntryEditScreen(vm: VaultViewModel, id: String?, initialType: EntryType) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     TrackedTextField(f.name, { f.name = it }, label = { Text("Tên trường") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     if (f.hidden) {
-                        SecretField(f.value, { f.value = it }, "Giá trị")
+                        SecretField(f.value, { f.value = it }, "Giá trị", guarded = true)
                     } else {
                         TrackedTextField(f.value, { f.value = it }, label = { Text("Giá trị") }, modifier = Modifier.fillMaxWidth())
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(checked = f.hidden, onCheckedChange = { f.hidden = it })
+                        // Bỏ che = hiện giá trị: qua cổng xác thực.
+                        Switch(checked = f.hidden, onCheckedChange = { on -> if (on) f.hidden = true else guard("Bỏ che “${f.name}”") { f.hidden = false } })
                         Text("  Che giấu", modifier = Modifier.weight(1f))
                         IconButton(onClick = { fields.removeAt(index) }) { Icon(Icons.Filled.Delete, "Xóa trường") }
                     }

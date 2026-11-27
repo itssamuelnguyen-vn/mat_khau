@@ -52,6 +52,10 @@ import com.samuelcruz.matkhau.ui.components.ErrorText
 import com.samuelcruz.matkhau.ui.components.FieldRow
 import com.samuelcruz.matkhau.ui.components.Hint
 import com.samuelcruz.matkhau.ui.components.LocalUserActivity
+import com.samuelcruz.matkhau.ui.components.LocalSecretGuard
+import com.samuelcruz.matkhau.ui.components.sensitive
+import com.samuelcruz.matkhau.ui.components.SensitiveWindow
+import com.samuelcruz.matkhau.security.SecretGuard
 import com.samuelcruz.matkhau.ui.components.SectionTitle
 import com.samuelcruz.matkhau.ui.components.TrackedTextField
 import com.samuelcruz.matkhau.ui.screens.RecoveryUnlockScreen
@@ -66,7 +70,11 @@ private fun AutofillFrame(vm: VaultViewModel, onCancel: () -> Unit, content: @Co
     val snackbarHost = remember { SnackbarHostState() }
     LaunchedEffect(vm) { vm.messages.collect { snackbarHost.showSnackbar(it) } }
 
-    CompositionLocalProvider(LocalUserActivity provides vm::userActivity) {
+    val activity = LocalContext.current as? androidx.fragment.app.FragmentActivity
+    val secretGuard: (String, () -> Unit) -> Unit = remember(activity) {
+        { reason, action -> if (activity != null) SecretGuard.run(activity, reason, action = action) else action() }
+    }
+    CompositionLocalProvider(LocalUserActivity provides vm::userActivity, LocalSecretGuard provides secretGuard) {
         Box(Modifier.fillMaxSize()) {
             when {
                 unlocked -> content()
@@ -241,7 +249,7 @@ private fun EntryItem(e: Entry, onClick: () -> Unit) {
     ListItem(
         headlineContent = { Text(e.title) },
         supportingContent = { Text(listOf(e.username, e.url).filter { it.isNotBlank() }.joinToString(" · ").ifEmpty { "—" }) },
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = Modifier.clickable(onClick = onClick).sensitive(),
     )
 }
 
@@ -272,6 +280,7 @@ private fun MismatchDialog(
             onDismissRequest = onDismiss,
             title = { Text("Điền “${entry.title}” vào $label?") },
             text = {
+                SensitiveWindow()
                 val context = LocalContext.current
                 val installer = remember(target.packageName) { AppIdentity.of(context, target.packageName).installer }
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -302,7 +311,7 @@ private fun MismatchDialog(
                 AlertDialog(
                     onDismissRequest = onDismiss,
                     title = { Text("⚠ Đã chặn: trang không mã hóa") },
-                    text = { Text("Mục “${entry.title}” lưu cho https, nhưng trang đang mở bằng http (không mã hóa): mật khẩu có thể bị đọc trên đường truyền. Hãy mở lại trang bằng https://.") },
+                    text = { SensitiveWindow(); Text("Mục “${entry.title}” lưu cho https, nhưng trang đang mở bằng http (không mã hóa): mật khẩu có thể bị đọc trên đường truyền. Hãy mở lại trang bằng https://.") },
                     confirmButton = { TextButton(onClick = onDismiss) { Text("Đã hiểu") } },
                 )
             } else if (savedHost == null && entry.url.isBlank()) {
@@ -312,6 +321,7 @@ private fun MismatchDialog(
                     onDismissRequest = onDismiss,
                     title = { Text("Gán trang này cho “${entry.title}”?") },
                     text = {
+                SensitiveWindow()
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
                                 "Mục chưa có URL. Trang đang mở là:\n${displayHost(target.host)}\n\nKiểm tra kỹ tên miền: trang giả mạo " +
@@ -328,6 +338,7 @@ private fun MismatchDialog(
                     onDismissRequest = onDismiss,
                     title = { Text("⚠ Đã chặn tự động điền") },
                     text = {
+                SensitiveWindow()
                         Text(
                             "Trang đang mở: ${displayHost(target.host)}\nMục “${entry.title}” lưu cho: ${savedHost ?: entry.url}\n\n" +
                                 "Tên miền không khớp nên đây có thể là trang giả mạo. Nếu đúng là website của bạn " +

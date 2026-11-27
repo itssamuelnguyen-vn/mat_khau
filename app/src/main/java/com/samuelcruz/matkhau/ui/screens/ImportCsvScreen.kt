@@ -21,6 +21,7 @@ import com.samuelcruz.matkhau.model.EntryType
 import com.samuelcruz.matkhau.ui.VaultViewModel
 import com.samuelcruz.matkhau.ui.components.AppScaffold
 import com.samuelcruz.matkhau.ui.components.Hint
+import com.samuelcruz.matkhau.ui.components.sensitive
 
 /**
  * Nhập từ CSV: xem trước (nguồn, số mục, mục trùng) → nhập trong một transaction → nhắc xóa file CSV
@@ -91,6 +92,7 @@ fun ImportCsvScreen(vm: VaultViewModel) {
                     Text("Xem trước", style = MaterialTheme.typography.titleSmall)
                     pending.entries.take(PREVIEW).forEach { e ->
                         ListItem(
+                            modifier = Modifier.sensitive(),
                             headlineContent = { Text(e.title) },
                             supportingContent = {
                                 val detail = if (e.type == EntryType.NOTE) "Ghi chú bảo mật" else listOf(e.username, e.url).filter { it.isNotBlank() }.joinToString(" · ")

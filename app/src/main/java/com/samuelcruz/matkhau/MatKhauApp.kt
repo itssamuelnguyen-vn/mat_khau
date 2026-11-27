@@ -65,6 +65,7 @@ class MatKhauApp : Application() {
     fun lockNow(clearClipboard: Boolean = true) {
         if (clearClipboard) SecureClipboard.clearIfPending(this)
         pendingAutofillSave = null
+        com.samuelcruz.matkhau.security.SecretGuard.reset()
         // Luôn gọi lock(): kể cả khi chưa mở, nó hủy luôn lần mở khóa còn đang chạy Argon2id.
         repository.lock()
     }

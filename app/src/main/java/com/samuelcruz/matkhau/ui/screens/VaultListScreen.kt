@@ -53,6 +53,7 @@ import com.samuelcruz.matkhau.model.EntryType
 import com.samuelcruz.matkhau.ui.Screen
 import com.samuelcruz.matkhau.ui.VaultViewModel
 import com.samuelcruz.matkhau.ui.components.AppScaffold
+import com.samuelcruz.matkhau.ui.components.sensitive
 import com.samuelcruz.matkhau.ui.components.TrackedTextField
 
 private const val FILTER_ALL = "__all"
@@ -160,7 +161,7 @@ private fun EntryRow(entry: Entry, onClick: () -> Unit) {
         else -> Categories.label(entry.category)
     }
     ListItem(
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = Modifier.clickable(onClick = onClick).sensitive(),
         leadingContent = {
             Box(
                 Modifier

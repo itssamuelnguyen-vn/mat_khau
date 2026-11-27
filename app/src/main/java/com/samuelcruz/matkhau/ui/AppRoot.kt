@@ -27,6 +27,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.samuelcruz.matkhau.ui.components.LocalUserActivity
+import com.samuelcruz.matkhau.ui.components.LocalSecretGuard
+import com.samuelcruz.matkhau.security.SecretGuard
+import com.samuelcruz.matkhau.ui.screens.findFragmentActivity
+import androidx.compose.ui.platform.LocalContext
 import com.samuelcruz.matkhau.ui.screens.ChangePasswordScreen
 import com.samuelcruz.matkhau.ui.screens.CreateVaultScreen
 import com.samuelcruz.matkhau.ui.screens.EntryDetailScreen
@@ -57,7 +61,11 @@ fun AppRoot(vm: VaultViewModel) {
         vm.messages.collect { snackbarHost.showSnackbar(it) }
     }
 
-    CompositionLocalProvider(LocalUserActivity provides vm::userActivity) {
+    val hostActivity = LocalContext.current.findFragmentActivity()
+    val secretGuard: (String, () -> Unit) -> Unit = remember(hostActivity) {
+        { reason, action -> if (hostActivity != null) SecretGuard.run(hostActivity, reason, action = action) else action() }
+    }
+    CompositionLocalProvider(LocalUserActivity provides vm::userActivity, LocalSecretGuard provides secretGuard) {
     // Mỗi lần mở khóa VÀ mỗi lần app quay lại foreground: vault có thể vừa được mở từ màn hình tự động điền.
     LaunchedEffect(unlocked) { if (unlocked) vm.ensureForcedFlows() }
     LifecycleResumeEffect(unlocked) {

@@ -50,6 +50,9 @@ import com.samuelcruz.matkhau.model.Categories
 import com.samuelcruz.matkhau.model.Entry
 import com.samuelcruz.matkhau.model.PasswordHistoryItem
 import com.samuelcruz.matkhau.ui.components.Hint
+import com.samuelcruz.matkhau.ui.components.LocalSecretGuard
+import com.samuelcruz.matkhau.ui.components.sensitive
+import com.samuelcruz.matkhau.ui.components.SensitiveWindow
 import com.samuelcruz.matkhau.model.EntryType
 import com.samuelcruz.matkhau.ui.Screen
 import com.samuelcruz.matkhau.ui.VaultViewModel
@@ -68,6 +71,7 @@ fun EntryDetailScreen(vm: VaultViewModel, id: String) {
     val entry = entries.firstOrNull { it.id == id }
     val context = LocalContext.current.applicationContext
     var confirmDelete by remember { mutableStateOf(false) }
+    val guard = LocalSecretGuard.current
     var restoreCandidate by remember { mutableStateOf<PasswordHistoryItem?>(null) }
 
     if (entry == null) {
@@ -85,7 +89,8 @@ fun EntryDetailScreen(vm: VaultViewModel, id: String) {
                     if (entry.favorite) "Bỏ yêu thích" else "Thêm vào yêu thích",
                 )
             }
-            IconButton(onClick = { vm.navigate(Screen.Edit(entry.id, entry.type)) }) { Icon(Icons.Filled.Edit, "Sửa") }
+            // Màn Sửa hiện ghi chú / trường tùy chỉnh ở dạng chữ: qua cổng xác thực như khi bấm "hiện".
+            IconButton(onClick = { guard("Sửa “${entry.title}”") { vm.navigate(Screen.Edit(entry.id, entry.type)) } }) { Icon(Icons.Filled.Edit, "Sửa") }
             IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Filled.Delete, "Xóa") }
         },
     ) {
@@ -163,7 +168,7 @@ fun EntryDetailScreen(vm: VaultViewModel, id: String) {
         AlertDialog(
             onDismissRequest = { restoreCandidate = null },
             title = { Text("Dùng lại mật khẩu cũ?") },
-            text = { Text("Mật khẩu hiện tại sẽ được chuyển vào lịch sử. App không đổi mật khẩu trên website: hãy chắc là website đang dùng mật khẩu cũ này.") },
+            text = { SensitiveWindow(); Text("Mật khẩu hiện tại sẽ được chuyển vào lịch sử. App không đổi mật khẩu trên website: hãy chắc là website đang dùng mật khẩu cũ này.") },
             confirmButton = {
                 TextButton(onClick = { restoreCandidate = null; vm.restorePassword(entry.id, old) }) { Text("Dùng lại") }
             },
@@ -175,7 +180,7 @@ fun EntryDetailScreen(vm: VaultViewModel, id: String) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text("Xóa \"${entry.title}\"?") },
-            text = { Text("Không thể hoàn tác (trừ khi bạn khôi phục từ backup cũ).") },
+            text = { SensitiveWindow(); Text("Không thể hoàn tác (trừ khi bạn khôi phục từ backup cũ).") },
             confirmButton = {
                 TextButton(onClick = { confirmDelete = false; vm.deleteEntry(entry.id) }) { Text("Xóa") }
             },
@@ -221,7 +226,7 @@ fun TotpCard(secret: String, onCopy: (String) -> Unit) {
     val code = Totp.generate(config, now)
     val remaining = Totp.secondsRemaining(config, now)
 
-    Card(Modifier.fillMaxWidth()) {
+    Card(Modifier.fillMaxWidth().sensitive()) {
         Column(Modifier.padding(16.dp)) {
             Text("Mã xác thực 2 bước (TOTP)", style = MaterialTheme.typography.labelMedium)
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -233,7 +238,11 @@ fun TotpCard(secret: String, onCopy: (String) -> Unit) {
                     modifier = Modifier.weight(1f),
                 )
                 Text("${remaining}s", style = MaterialTheme.typography.bodyMedium)
-                IconButton(onClick = { onCopy(code) }) { Icon(Icons.Filled.ContentCopy, "Copy mã") }
+                val guard = LocalSecretGuard.current
+                // Tính lại mã SAU khi xác thực xong (hộp thoại vân tay có thể mở quá chu kỳ 30 giây).
+                IconButton(onClick = { guard("Copy mã 2FA") { onCopy(Totp.generate(config, System.currentTimeMillis() / 1000)) } }) {
+                    Icon(Icons.Filled.ContentCopy, "Copy mã")
+                }
             }
             LinearProgressIndicator(
                 progress = { remaining / config.period.toFloat() },

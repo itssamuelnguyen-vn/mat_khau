@@ -34,6 +34,7 @@ import com.samuelcruz.matkhau.ui.Screen
 import com.samuelcruz.matkhau.ui.VaultViewModel
 import com.samuelcruz.matkhau.ui.components.AppScaffold
 import com.samuelcruz.matkhau.ui.components.Hint
+import com.samuelcruz.matkhau.ui.components.sensitive
 
 /**
  * Sức khỏe mật khẩu (spec 3.4–3.7): mật khẩu yếu, dùng chung, lâu chưa đổi, thiếu 2FA, thiếu URL.
@@ -145,7 +146,7 @@ private fun HealthSection(
                     ListItem(
                         headlineContent = { Text(entry.title) },
                         supportingContent = { if (detail.isNotBlank()) Text(detail) },
-                        modifier = Modifier.clickable { onOpen(entry) },
+                        modifier = Modifier.clickable { onOpen(entry) }.sensitive(),
                     )
                 }
             } else if (items.isNotEmpty()) {

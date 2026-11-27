@@ -41,7 +41,13 @@ class AppSettings(context: Context) {
 
     fun untrustBrowser(packageName: String) = prefs.edit().remove(KEY_BROWSER_PREFIX + packageName).apply()
 
+    /** Bắt xác thực (vân tay / khóa màn hình) mỗi lần hiện, copy hoặc tự điền bí mật (chống trojan Trợ năng). */
+    var requireAuthForSecrets: Boolean
+        get() = prefs.getBoolean(KEY_REQUIRE_AUTH, false)
+        set(value) = prefs.edit().putBoolean(KEY_REQUIRE_AUTH, value).apply()
+
     companion object {
+        private const val KEY_REQUIRE_AUTH = "require_auth_for_secrets"
         private const val KEY_BROWSER_PREFIX = "trusted_browser:"
         private const val KEY_MUST_CHANGE_PASSWORD = "must_change_password"
         private const val KEY_RECOVERY_PENDING = "recovery_key_pending"

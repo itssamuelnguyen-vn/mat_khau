@@ -43,6 +43,11 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.platform.LocalView
+import com.samuelcruz.matkhau.security.AccessibilityGuard
+import androidx.compose.ui.semantics.isSensitiveData
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -60,6 +65,28 @@ import com.samuelcruz.matkhau.core.generator.StrengthEstimator
  * cửa sổ chính, KHÔNG thấy chữ gõ từ bàn phím ảo hay chạm trong hộp thoại, nên các ô nhập và hộp thoại tự báo.
  */
 val LocalUserActivity = staticCompositionLocalOf<() -> Unit> { {} }
+
+/**
+ * Cổng trước khi lộ bí mật (hiện / copy): (lý do, hành động). Khi bật tùy chọn "xác thực mỗi lần" thì hỏi vân tay
+ * trước (SecretGuard); mặc định chạy luôn.
+ */
+val LocalSecretGuard = staticCompositionLocalOf<(String, () -> Unit) -> Unit> { { _, action -> action() } }
+
+/**
+ * Nút giao diện chứa dữ liệu nhạy cảm: chỉ công cụ Trợ năng thật (TalkBack...) thấy và thao tác được; dịch vụ Trợ năng
+ * khác (trojan) không đọc được nội dung, không bấm thay được (Android 14+; máy cũ hơn: không có tác dụng).
+ */
+fun Modifier.sensitive(): Modifier = semantics { isSensitiveData = true }
+
+/**
+ * Đặt trong nội dung của AlertDialog / Dialog / Popup: đó là CỬA SỔ RIÊNG, không thừa hưởng đánh dấu nhạy cảm của
+ * activity (FLAG_SECURE thì có), nên phải tự đánh dấu.
+ */
+@Composable
+fun SensitiveWindow() {
+    val view = LocalView.current
+    SideEffect { AccessibilityGuard.protectView(view) }
+}
 
 /** Gắn vào nội dung hộp thoại / popup: mỗi lần chạm đều tính là thao tác (không chặn sự kiện). */
 fun Modifier.trackUserActivity(onActivity: () -> Unit): Modifier = pointerInput(onActivity) {
@@ -89,7 +116,7 @@ fun TrackedTextField(
     OutlinedTextField(
         value = value,
         onValueChange = { activity(); onValueChange(it) },
-        modifier = modifier,
+        modifier = modifier.sensitive(),
         label = label,
         placeholder = placeholder,
         leadingIcon = leadingIcon,
@@ -135,7 +162,7 @@ fun AppScaffold(
             .fillMaxSize()
             .imePadding()
         Column(
-            modifier = if (scrollable) base.verticalScroll(rememberScrollState()).padding(16.dp) else base,
+            modifier = (if (scrollable) base.verticalScroll(rememberScrollState()).padding(16.dp) else base).sensitive(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             content = content,
         )
@@ -149,25 +176,34 @@ fun SecretField(
     onValueChange: (String) -> Unit,
     label: String,
     modifier: Modifier = Modifier,
+    /** true: bấm "hiện" phải qua cổng xác thực (ô chứa bí mật đã lưu). false: chữ người dùng vừa gõ. */
+    guarded: Boolean = false,
     imeAction: ImeAction = ImeAction.Done,
     monospace: Boolean = false,
     trailingExtra: @Composable () -> Unit = {},
 ) {
     var visible by remember { mutableStateOf(false) }
     val activity = LocalUserActivity.current
+    val guard = LocalSecretGuard.current
     OutlinedTextField(
         value = value,
         onValueChange = { activity(); onValueChange(it) },
         label = { Text(label) },
         singleLine = true,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().sensitive(),
         visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = imeAction, autoCorrectEnabled = false),
         textStyle = if (monospace) MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace) else MaterialTheme.typography.bodyLarge,
         trailingIcon = {
             Row {
                 trailingExtra()
-                IconButton(onClick = { visible = !visible }) {
+                IconButton(onClick = {
+                    when {
+                        visible -> visible = false
+                        guarded -> guard("Hiện $label") { visible = true }
+                        else -> visible = true
+                    }
+                }) {
                     Icon(
                         if (visible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
                         contentDescription = if (visible) "Ẩn" else "Hiện",
@@ -215,7 +251,8 @@ fun FieldRow(
 ) {
     if (value.isEmpty()) return
     var revealed by remember { mutableStateOf(false) }
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+    val guard = LocalSecretGuard.current
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().sensitive()) {
         Column(modifier = Modifier.weight(1f)) {
             Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
@@ -224,12 +261,14 @@ fun FieldRow(
             )
         }
         if (secret) {
-            IconButton(onClick = { revealed = !revealed }) {
+            IconButton(onClick = { if (revealed) revealed = false else guard("Hiện $label") { revealed = true } }) {
                 Icon(if (revealed) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, contentDescription = "Hiện/ẩn")
             }
         }
         if (onCopy != null) {
-            IconButton(onClick = onCopy) { Icon(Icons.Filled.ContentCopy, contentDescription = "Copy $label") }
+            IconButton(onClick = { if (secret) guard("Copy $label") { onCopy() } else onCopy() }) {
+                Icon(Icons.Filled.ContentCopy, contentDescription = "Copy $label")
+            }
         }
     }
 }

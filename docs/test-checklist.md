@@ -1,4 +1,4 @@
-# Mật Khẩu 0.3.0: checklist thử trên điện thoại
+# Mật Khẩu 0.4.0: checklist thử trên điện thoại
 
 Đánh dấu `[x]` khi đạt. Mục nào sai: ghi lại bước làm, điều thấy được, và chụp màn hình bằng **máy khác** (app chặn
 chụp màn hình).
@@ -502,6 +502,54 @@ Secret TOTP dùng để thử: `JBSWY3DPEHPK3PXP`.
 - [ ] **P14 (P1): tự khóa sau khi điền**
   - Bước: Tự khóa sau = "Ngay khi rời app", điền một lần, rồi mở app Mật Khẩu.
   - Mong đợi: vault đã khóa (vì vừa rời app sau khi điền).
+
+## Q. Chống mã độc dùng quyền Trợ năng (0.4.0)
+
+- [ ] **Q1 (P0): màn Bảo mật báo đúng**
+  - Bước: Cài đặt → Bảo mật & quyền riêng tư.
+  - Mong đợi:
+    - "App có quyền Trợ năng: Không có app lạ…" ✓ (nếu bạn không bật app Trợ năng nào);
+    - "Chặn app Trợ năng đọc màn hình: Bật (Android 14+)" ✓;
+    - "Bàn phím đang dùng" hiện đúng bàn phím của bạn.
+- [ ] **Q2 (P0): TalkBack vẫn dùng được**
+  - Chỉ làm nếu muốn thử.
+  - Bước: bật TalkBack (Cài đặt → Hỗ trợ tiếp cận) rồi mở app.
+  - Mong đợi: TalkBack vẫn đọc được màn hình, vì nó là công cụ Trợ năng thật. Thử xong nhớ tắt TalkBack.
+- [ ] **Q3 (P1): cảnh báo app Trợ năng lạ**
+  - Chỉ làm nếu máy có sẵn một app Trợ năng không phải công cụ thật (vd. app tự động bấm, app khóa màn hình, app đọc thông báo).
+  - Bước: bật Trợ năng cho app đó, khóa vault rồi mở app.
+  - Mong đợi:
+    - màn mở khóa hiện "⚠ App đang có quyền Trợ năng: <tên> (<tên gói>)…";
+    - màn Bảo mật hiện ⚠ kèm tên app, và dòng "Xác thực khi hiện / copy" ghi "Đang TỰ BẬT…";
+    - dù chưa bật tùy chọn ở Q4, bấm hiện mật khẩu vẫn bị hỏi vân tay;
+    - thử xong tắt lại Trợ năng cho app đó.
+- [ ] **Q4 (P0): bật xác thực mỗi lần**
+  - Bước: Cài đặt → Chống mã độc → bật "Xác thực mỗi lần hiện / copy / tự điền mật khẩu".
+  - Mong đợi: công tắc bật.
+- [ ] **Q5 (P0): hiện mật khẩu**
+  - Bước: mở một mục, bấm 👁 cạnh mật khẩu.
+  - Mong đợi:
+    - hệ thống hỏi vân tay (hoặc mã PIN của máy);
+    - quét xong thì mật khẩu hiện ra;
+    - bấm Hủy thì mật khẩu vẫn bị che.
+- [ ] **Q6 (P1): miễn hỏi lại 30 giây**
+  - Bước: trong vòng 30 giây sau Q5, bấm copy mật khẩu rồi copy mã 2FA.
+  - Mong đợi: không hỏi lại; quá 30 giây thì hỏi lại.
+- [ ] **Q7 (P1): khóa thì hết miễn**
+  - Bước: khóa vault, mở lại, bấm hiện mật khẩu ngay.
+  - Mong đợi: hỏi vân tay lại, thời gian miễn không còn.
+- [ ] **Q8 (P0): tự động điền cũng phải xác thực**
+  - Bước: khi tùy chọn đang bật, tự động điền vào một trang web.
+  - Mong đợi: sau khi chọn mục thì hỏi vân tay, quét xong mới điền.
+- [ ] **Q9 (P1): tắt tùy chọn cũng phải xác thực**
+  - Bước: tắt công tắc ở Q4.
+  - Mong đợi: hỏi vân tay trước khi cho tắt.
+- [ ] **Q10 (P1): màn Sửa và bỏ che cũng phải xác thực**
+  - Bước: khi tùy chọn đang bật và đã quá 30 giây từ lần xác thực trước, bấm ✏️ Sửa trên một mục; trong màn Sửa, tắt "Che giấu" của một trường tùy chỉnh.
+  - Mong đợi: cả hai đều hỏi vân tay trước.
+- [ ] **Q11 (P2): hiện chữ ở màn mở khóa không bị hỏi**
+  - Bước: ở màn mở khóa, gõ mật khẩu rồi bấm 👁.
+  - Mong đợi: hiện chữ ngay, không hỏi vân tay (đó là chữ bạn vừa gõ).
 
 ## M. Cài bản mới đè lên (làm khi có bản 0.1.2+)
 

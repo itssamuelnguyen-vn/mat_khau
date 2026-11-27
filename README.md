@@ -13,6 +13,8 @@ Mọi dữ liệu được mã hóa ngay trên điện thoại bằng mật kh�
 - **Nhập từ CSV** của Bitwarden, Chrome / Google, Firefox, KeePass…
 - Mở bằng vân tay / khuôn mặt (Android Keystore), Recovery Key khi quên mật khẩu chính
 - Tự khóa, tự xóa clipboard, chặn chụp màn hình, màn hình kiểm tra bảo mật
+- **Chống mã độc dùng quyền Trợ năng** (Android 14+): app lạ có quyền Trợ năng không đọc được màn hình, không bấm thay
+  được; cảnh báo app Trợ năng / bàn phím lạ; tùy chọn bắt quét vân tay mỗi lần hiện, copy hoặc tự điền mật khẩu
 - Backup mã hóa (`.lvbackup`) mở được bằng mật khẩu chính hoặc Recovery Key, khôi phục được trên máy khác
 
 ## Build

@@ -40,6 +40,8 @@ import com.samuelcruz.matkhau.ui.components.AppScaffold
 import com.samuelcruz.matkhau.ui.components.Hint
 import com.samuelcruz.matkhau.ui.components.LocalUserActivity
 import com.samuelcruz.matkhau.ui.components.trackUserActivity
+import com.samuelcruz.matkhau.ui.components.SensitiveWindow
+import com.samuelcruz.matkhau.ui.components.sensitive
 
 /** Trạng thái bộ sinh mật khẩu, dùng chung cho màn hình riêng và hộp thoại trong form. */
 private class GeneratorState {
@@ -80,6 +82,7 @@ private fun GeneratorPanel(vm: VaultViewModel, state: GeneratorState, onCopy: ((
     }
 
     val activity = LocalUserActivity.current
+    SensitiveWindow()   // khi nằm trong GeneratorDialog (cửa sổ riêng)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.trackUserActivity(activity)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = !state.passphraseMode, onClick = { state.passphraseMode = false }, label = { Text("Mật khẩu") })
@@ -91,7 +94,7 @@ private fun GeneratorPanel(vm: VaultViewModel, state: GeneratorState, onCopy: ((
                     state.result.ifEmpty { "Chọn ít nhất một loại ký tự" },
                     fontFamily = FontFamily.Monospace,
                     style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).sensitive(),
                 )
                 IconButton(onClick = { state.regenerate(words) }) { Icon(Icons.Filled.Refresh, "Sinh lại") }
                 if (onCopy != null) IconButton(onClick = onCopy, enabled = state.result.isNotEmpty()) { Icon(Icons.Filled.ContentCopy, "Copy") }

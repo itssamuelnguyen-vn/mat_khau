@@ -152,6 +152,48 @@ object SecurityAudit {
             CheckStatus.INFO,
         )
 
+        val risky = AccessibilityGuard.riskyServices(activity)
+        checks += AuditCheck(
+            "App có quyền Trợ năng",
+            if (risky.isEmpty()) {
+                "Không có app lạ nào đang bật Trợ năng (chỉ công cụ thật như TalkBack, nếu có)"
+            } else {
+                "Đang bật: " + risky.joinToString { "${it.label} (${it.packageName})" } +
+                    ". App có quyền Trợ năng đọc được màn hình và bấm thay bạn. Nếu không nhận ra, hãy tắt trong Cài đặt → Trợ năng và gỡ app."
+            },
+            if (risky.isEmpty()) CheckStatus.OK else CheckStatus.WARNING,
+        )
+        val windowProtected = AccessibilityGuard.isWindowProtected(activity)
+        checks += AuditCheck(
+            "Chặn app Trợ năng đọc màn hình",
+            when {
+                windowProtected -> "Bật: cửa sổ app được đánh dấu nhạy cảm, chỉ công cụ Trợ năng đã khai báo đọc / thao tác được. " +
+                    "Lưu ý: app cài ngoài có thể tự khai báo là công cụ, nên app vẫn cảnh báo mọi app Trợ năng lạ và tự bắt xác thực."
+                AccessibilityGuard.isWindowProtectionSupported -> "Cửa sổ CHƯA được đánh dấu nhạy cảm"
+                else -> "Không hỗ trợ trên Android dưới 14"
+            },
+            if (windowProtected) CheckStatus.OK else CheckStatus.WARNING,
+        )
+        val keyboard = AccessibilityGuard.keyboard(activity)
+        checks += AuditCheck(
+            "Bàn phím đang dùng",
+            when {
+                keyboard == null -> "Không đọc được"
+                keyboard.trusted -> "${keyboard.label}: bàn phím hệ thống / cài từ cửa hàng"
+                else -> "${keyboard.label} (${keyboard.packageName}): không phải bàn phím hệ thống. Bàn phím ghi lại được mọi thứ bạn gõ, kể cả mật khẩu chính; nên mở vault bằng vân tay."
+            },
+            if (keyboard?.trusted == false) CheckStatus.WARNING else CheckStatus.INFO,
+        )
+        checks += AuditCheck(
+            "Xác thực khi hiện / copy mật khẩu",
+            when {
+                app.settings.requireAuthForSecrets -> "Bật"
+                risky.isNotEmpty() -> "Đang TỰ BẬT vì có app Trợ năng lạ (tắt app đó thì tùy chọn của bạn được dùng lại)"
+                else -> "Tắt — nên bật để mã độc không thể bấm thay bạn để xem mật khẩu"
+            },
+            if (app.settings.requireAuthForSecrets || risky.isNotEmpty()) CheckStatus.OK else CheckStatus.INFO,
+        )
+
         val keyguard = activity.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         checks += AuditCheck(
             "Khóa màn hình điện thoại",

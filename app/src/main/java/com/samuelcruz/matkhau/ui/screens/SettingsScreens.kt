@@ -1,6 +1,8 @@
 package com.samuelcruz.matkhau.ui.screens
 
 import android.app.Activity
+import com.samuelcruz.matkhau.security.AccessibilityGuard
+import com.samuelcruz.matkhau.security.SecretGuard
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -103,6 +105,36 @@ fun SettingsScreen(vm: VaultViewModel) {
                 },
             )
         }
+
+        SectionTitle("Chống mã độc")
+        var guardAvailable by remember { mutableStateOf(false) }
+        var requireAuth by remember { mutableStateOf(vm.settings.requireAuthForSecrets) }
+        LifecycleResumeEffect(activity) {
+            guardAvailable = activity?.let { SecretGuard.isAvailable(it) } == true   // vừa thêm vân tay trong Cài đặt máy?
+            onPauseOrDispose { }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f)) {
+                Text("Xác thực mỗi lần hiện / copy / tự điền mật khẩu")
+                Hint(
+                    if (guardAvailable) "Quét vân tay (hoặc mở khóa màn hình) trước khi lộ bí mật; miễn hỏi lại 30 giây. Mã độc có thể bấm thay bạn nhưng không giả được vân tay."
+                    else "Máy chưa có vân tay / khóa màn hình",
+                )
+            }
+            Switch(
+                checked = requireAuth,
+                enabled = guardAvailable || requireAuth,
+                onCheckedChange = { on ->
+                    val apply = { vm.settings.requireAuthForSecrets = on; requireAuth = on }
+                    // Tắt cũng phải xác thực: mã độc không tự tắt được lớp bảo vệ này.
+                    if (!on && activity != null) SecretGuard.run(activity, "Tắt xác thực khi hiện mật khẩu", force = true, action = apply) else apply()
+                },
+            )
+        }
+        Hint(
+            if (AccessibilityGuard.isWindowProtectionSupported) "Màn hình của app chỉ cho công cụ Trợ năng thật (TalkBack…) đọc và thao tác; app Trợ năng khác (trojan) không thấy gì."
+            else "Máy dưới Android 14: không chặn được app Trợ năng đọc màn hình. Đừng cấp quyền Trợ năng cho app lạ.",
+        )
 
         SectionTitle("Tự động điền")
         // Đọc lại mỗi lần quay về màn hình (người dùng vừa bật / tắt trong Cài đặt hệ thống).
