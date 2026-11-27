@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -26,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -35,6 +37,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -46,6 +54,53 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.samuelcruz.matkhau.core.generator.Strength
 import com.samuelcruz.matkhau.core.generator.StrengthEstimator
+
+/**
+ * Báo "người dùng đang thao tác" cho bộ hẹn giờ tự khóa. Activity.onUserInteraction chỉ thấy chạm/phím trên
+ * cửa sổ chính, KHÔNG thấy chữ gõ từ bàn phím ảo hay chạm trong hộp thoại, nên các ô nhập và hộp thoại tự báo.
+ */
+val LocalUserActivity = staticCompositionLocalOf<() -> Unit> { {} }
+
+/** Gắn vào nội dung hộp thoại / popup: mỗi lần chạm đều tính là thao tác (không chặn sự kiện). */
+fun Modifier.trackUserActivity(onActivity: () -> Unit): Modifier = pointerInput(onActivity) {
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        onActivity()
+    }
+}
+
+/** OutlinedTextField có báo thao tác cho bộ hẹn giờ tự khóa mỗi khi nội dung đổi. */
+@Composable
+fun TrackedTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    label: (@Composable () -> Unit)? = null,
+    placeholder: (@Composable () -> Unit)? = null,
+    leadingIcon: (@Composable () -> Unit)? = null,
+    trailingIcon: (@Composable () -> Unit)? = null,
+    singleLine: Boolean = false,
+    minLines: Int = 1,
+    textStyle: TextStyle = LocalTextStyle.current,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+) {
+    val activity = LocalUserActivity.current
+    OutlinedTextField(
+        value = value,
+        onValueChange = { activity(); onValueChange(it) },
+        modifier = modifier,
+        label = label,
+        placeholder = placeholder,
+        leadingIcon = leadingIcon,
+        trailingIcon = trailingIcon,
+        singleLine = singleLine,
+        minLines = minLines,
+        textStyle = textStyle,
+        keyboardOptions = keyboardOptions,
+        visualTransformation = visualTransformation,
+    )
+}
 
 /** Khung chung cho mọi màn hình: thanh tiêu đề, nút back, nội dung cuộn được. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,6 +131,7 @@ fun AppScaffold(
     ) { padding ->
         val base = Modifier
             .padding(padding)
+            .consumeWindowInsets(padding)   // để imePadding không cộng thêm phần thanh điều hướng lần nữa
             .fillMaxSize()
             .imePadding()
         Column(
@@ -98,14 +154,15 @@ fun SecretField(
     trailingExtra: @Composable () -> Unit = {},
 ) {
     var visible by remember { mutableStateOf(false) }
+    val activity = LocalUserActivity.current
     OutlinedTextField(
         value = value,
-        onValueChange = onValueChange,
+        onValueChange = { activity(); onValueChange(it) },
         label = { Text(label) },
         singleLine = true,
         modifier = modifier.fillMaxWidth(),
         visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = imeAction),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = imeAction, autoCorrectEnabled = false),
         textStyle = if (monospace) MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace) else MaterialTheme.typography.bodyLarge,
         trailingIcon = {
             Row {

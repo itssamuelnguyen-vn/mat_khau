@@ -14,7 +14,22 @@ class AppSettings(context: Context) {
         get() = prefs.getInt(KEY_CLIPBOARD, 30)
         set(value) = prefs.edit().putInt(KEY_CLIPBOARD, value).apply()
 
+    /**
+     * true khi Recovery Key vừa tạo chưa được xác nhận "đã chép" (vd. vault tự khóa giữa chừng).
+     * Lần mở khóa sau, app tạo key mới và hiện lại. Không phải bí mật: chỉ là một cờ.
+     */
+    var recoveryKeyPending: Boolean
+        get() = prefs.getBoolean(KEY_RECOVERY_PENDING, false)
+        set(value) = prefs.edit().putBoolean(KEY_RECOVERY_PENDING, value).apply()
+
+    /** true sau khi mở bằng Recovery Key: mọi lần mở khóa sau đều bắt đặt mật khẩu chính mới cho tới khi xong. */
+    var mustChangePassword: Boolean
+        get() = prefs.getBoolean(KEY_MUST_CHANGE_PASSWORD, false)
+        set(value) = prefs.edit().putBoolean(KEY_MUST_CHANGE_PASSWORD, value).apply()
+
     companion object {
+        private const val KEY_MUST_CHANGE_PASSWORD = "must_change_password"
+        private const val KEY_RECOVERY_PENDING = "recovery_key_pending"
         private const val KEY_AUTO_LOCK = "auto_lock_ms"
         private const val KEY_CLIPBOARD = "clipboard_seconds"
 

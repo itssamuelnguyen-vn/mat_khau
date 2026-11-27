@@ -34,7 +34,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -53,6 +52,7 @@ import com.samuelcruz.matkhau.model.EntryType
 import com.samuelcruz.matkhau.ui.Screen
 import com.samuelcruz.matkhau.ui.VaultViewModel
 import com.samuelcruz.matkhau.ui.components.AppScaffold
+import com.samuelcruz.matkhau.ui.components.TrackedTextField
 
 private const val FILTER_ALL = "__all"
 private const val FILTER_NOTES = "__notes"
@@ -99,7 +99,7 @@ fun VaultListScreen(vm: VaultViewModel) {
             }
         },
     ) {
-        OutlinedTextField(
+        TrackedTextField(
             value = query,
             onValueChange = { query = it },
             placeholder = { Text("Tìm theo tên, username, URL, #tag") },

@@ -16,6 +16,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -24,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.samuelcruz.matkhau.ui.components.LocalUserActivity
 import com.samuelcruz.matkhau.ui.screens.ChangePasswordScreen
 import com.samuelcruz.matkhau.ui.screens.CreateVaultScreen
 import com.samuelcruz.matkhau.ui.screens.EntryDetailScreen
@@ -47,16 +49,17 @@ fun AppRoot(vm: VaultViewModel) {
     val unlocked by vm.repository.unlocked.collectAsState()
     val snackbarHost = remember { SnackbarHostState() }
 
-    LaunchedEffect(vm.snackbar) {
-        val msg = vm.snackbar ?: return@LaunchedEffect
-        vm.snackbar = null
-        snackbarHost.showSnackbar(msg)
+    // Lấy thông báo từ hàng đợi của ViewModel và hiện lần lượt.
+    LaunchedEffect(vm) {
+        vm.messages.collect { snackbarHost.showSnackbar(it) }
     }
 
+    CompositionLocalProvider(LocalUserActivity provides vm::userActivity) {
     Box(Modifier.fillMaxSize()) {
         if (unlocked) {
-            BackHandler(enabled = vm.stack.size > 1) { vm.back() }
-            when (val screen = vm.stack.last()) {
+            // Đang chạy tác vụ (lưu, đổi mật khẩu...): chặn Back để stack không bị đổi giữa chừng.
+            BackHandler(enabled = vm.stack.size > 1 || vm.busyText != null) { if (vm.busyText == null) vm.back() }
+            when (val screen = vm.stack.lastOrNull() ?: Screen.VaultList) {
                 Screen.VaultList -> VaultListScreen(vm)
                 is Screen.Detail -> EntryDetailScreen(vm, screen.id)
                 is Screen.Edit -> EntryEditScreen(vm, screen.id, screen.type)
@@ -64,7 +67,7 @@ fun AppRoot(vm: VaultViewModel) {
                 Screen.Settings -> SettingsScreen(vm)
                 Screen.Security -> SecurityScreen(vm)
                 is Screen.ChangePassword -> ChangePasswordScreen(vm, screen.forced)
-                is Screen.ShowRecoveryKey -> ShowRecoveryKeyScreen(vm, screen.key, screen.firstTime)
+                is Screen.ShowRecoveryKey -> ShowRecoveryKeyScreen(vm, screen.key, screen.firstTime, screen.replacedUnconfirmed)
                 Screen.Restore -> RestoreScreen(vm)
             }
         } else {
@@ -108,5 +111,6 @@ fun AppRoot(vm: VaultViewModel) {
                 .navigationBarsPadding()
                 .padding(16.dp),
         )
+    }
     }
 }

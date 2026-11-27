@@ -22,7 +22,7 @@ object SecureClipboard {
 
     fun copy(context: Context, label: String, text: String, clearAfterSeconds: Int) {
         val cm = context.getSystemService(ClipboardManager::class.java) ?: return
-        val clip = ClipData.newPlainText(label, text)
+        val clip = ClipData.newPlainText(LABEL_PREFIX + label, text)
         clip.description.extras = PersistableBundle().apply {
             val key = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 ClipDescription.EXTRA_IS_SENSITIVE
@@ -48,6 +48,13 @@ object SecureClipboard {
         pendingClear?.let { handler.removeCallbacks(it) }
         pendingClear = null
         val cm = context.getSystemService(ClipboardManager::class.java) ?: return
-        runCatching { cm.clearPrimaryClip() }
+        runCatching {
+            // Nếu đọc được nhãn (app đang ở foreground) và clipboard đã là thứ khác người dùng copy sau đó,
+            // thì không xóa. Không đọc được (app ở nền, Android 10+) => xóa cho chắc.
+            val current = cm.primaryClipDescription?.label?.toString()
+            if (current == null || current.startsWith(LABEL_PREFIX)) cm.clearPrimaryClip()
+        }
     }
+
+    private const val LABEL_PREFIX = "Mật Khẩu: "
 }

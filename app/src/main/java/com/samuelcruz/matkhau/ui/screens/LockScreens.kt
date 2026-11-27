@@ -20,10 +20,10 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -42,6 +43,7 @@ import androidx.fragment.app.FragmentActivity
 import com.samuelcruz.matkhau.ui.LockedScreen
 import com.samuelcruz.matkhau.ui.VaultViewModel
 import com.samuelcruz.matkhau.ui.components.AppScaffold
+import com.samuelcruz.matkhau.ui.components.TrackedTextField
 import com.samuelcruz.matkhau.ui.components.ErrorText
 import com.samuelcruz.matkhau.ui.components.Hint
 import com.samuelcruz.matkhau.ui.components.SecretField
@@ -117,7 +119,11 @@ fun UnlockScreen(vm: VaultViewModel) {
 
     // Tự bật hộp thoại vân tay một lần khi vào màn hình (hoặc ngay khi đọc xong trạng thái vân tay từ DB)
     LaunchedEffect(bioAvailable) {
-        if (bioAvailable && activity != null) vm.unlockWithBiometric(activity)
+        when {
+            // Vừa bấm "Khóa ngay": không bật ngay hộp thoại vân tay (người dùng muốn khóa, không muốn mở)
+            vm.skipNextBiometricPrompt -> vm.skipNextBiometricPrompt = false
+            bioAvailable && activity != null -> vm.unlockWithBiometric(activity)
+        }
     }
 
     AppScaffold(title = "Mật Khẩu") {
@@ -150,7 +156,7 @@ fun RecoveryUnlockScreen(vm: VaultViewModel) {
     var key by remember { mutableStateOf("") }
     AppScaffold(title = "Mở bằng Recovery Key", onBack = { vm.showLocked(LockedScreen.Unlock) }) {
         Hint("Nhập Recovery Key 32 ký tự bạn đã ghi lại khi tạo vault (có hoặc không có dấu gạch đều được). Sau khi mở, bạn sẽ đặt mật khẩu chính mới.")
-        OutlinedTextField(
+        TrackedTextField(
             value = key,
             onValueChange = { key = it.uppercase() },
             label = { Text("XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX") },
@@ -169,11 +175,26 @@ fun RecoveryUnlockScreen(vm: VaultViewModel) {
 
 /** Hiển thị Recovery Key MỘT lần. Không có nút copy: nên chép tay ra giấy. */
 @Composable
-fun ShowRecoveryKeyScreen(vm: VaultViewModel, recoveryKey: String, firstTime: Boolean) {
+fun ShowRecoveryKeyScreen(vm: VaultViewModel, recoveryKey: String, firstTime: Boolean, replacedUnconfirmed: Boolean) {
     var saved by remember { mutableStateOf(false) }
+    // Chép tay mất thời gian: giữ màn hình sáng và tạm dừng hẹn giờ tự khóa khi không thao tác.
+    // Tắt màn hình hay rời app thì vẫn khóa; lần mở khóa sau app sẽ tạo key mới (recoveryKeyPending).
+    val view = LocalView.current
+    DisposableEffect(Unit) {
+        view.keepScreenOn = true
+        vm.pauseInactivityLock(true)
+        onDispose {
+            view.keepScreenOn = false
+            vm.pauseInactivityLock(false)
+        }
+    }
     AppScaffold(title = "Recovery Key") {
         Text(
-            if (firstTime) "Vault đã được tạo. Đây là Recovery Key của bạn:" else "Recovery Key MỚI (key cũ đã bị vô hiệu):",
+            when {
+                firstTime -> "Vault đã được tạo. Đây là Recovery Key của bạn:"
+                replacedUnconfirmed -> "Lần trước vault bị khóa khi bạn chưa xác nhận đã chép Recovery Key, nên app đã tạo key MỚI (key cũ không còn dùng được):"
+                else -> "Recovery Key MỚI (key cũ đã bị vô hiệu):"
+            },
             style = MaterialTheme.typography.titleMedium,
         )
         Card(Modifier.fillMaxWidth()) {

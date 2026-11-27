@@ -92,8 +92,11 @@ fun QrScanScreen(onResult: (String) -> Unit, onCancel: () -> Unit) {
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
             analysis.setAnalyzer(analysisExecutor) { image ->
+                // Luồng của executor: exception nào lọt ra cũng làm sập app, nên bắt hết (bỏ qua khung hình đó).
                 val text = try {
                     if (finished.get()) null else decodeFrame(image)
+                } catch (e: Exception) {
+                    null
                 } finally {
                     image.close()
                 }

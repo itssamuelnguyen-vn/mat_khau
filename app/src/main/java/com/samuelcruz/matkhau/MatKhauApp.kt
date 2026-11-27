@@ -38,7 +38,7 @@ class MatKhauApp : Application() {
         settings = AppSettings(this)
         repository = VaultRepository(this)
         appScope.launch { repository.load() }   // đọc DB trên Dispatchers.IO, không chặn main thread
-        autoLock = AutoLockManager(settings, isUnlocked = { repository.isUnlocked() }, lockNow = { lockNow() })
+        autoLock = AutoLockManager(settings, isUnlocked = { repository.isUnlocked() }, lockNow = { clearClipboard -> lockNow(clearClipboard) })
         ProcessLifecycleOwner.get().lifecycle.addObserver(autoLock)
 
         // Tắt màn hình => khóa ngay. ACTION_SCREEN_OFF là broadcast hệ thống, không cần quyền.
@@ -54,8 +54,13 @@ class MatKhauApp : Application() {
         )
     }
 
-    fun lockNow() {
-        SecureClipboard.clearIfPending(this)
-        if (repository.isUnlocked()) repository.lock()
+    /**
+     * @param clearClipboard false khi khóa vì rời app: người dùng thường vừa copy mật khẩu để dán sang app khác,
+     *   nên để bộ đếm của SecureClipboard tự xóa (tối đa 2 phút) thay vì xóa ngay.
+     */
+    fun lockNow(clearClipboard: Boolean = true) {
+        if (clearClipboard) SecureClipboard.clearIfPending(this)
+        // Luôn gọi lock(): kể cả khi chưa mở, nó hủy luôn lần mở khóa còn đang chạy Argon2id.
+        repository.lock()
     }
 }

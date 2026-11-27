@@ -25,7 +25,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,6 +46,7 @@ import com.samuelcruz.matkhau.model.Entry
 import com.samuelcruz.matkhau.model.EntryType
 import com.samuelcruz.matkhau.ui.VaultViewModel
 import com.samuelcruz.matkhau.ui.components.AppScaffold
+import com.samuelcruz.matkhau.ui.components.TrackedTextField
 import com.samuelcruz.matkhau.ui.components.ErrorText
 import com.samuelcruz.matkhau.ui.components.Hint
 import com.samuelcruz.matkhau.ui.components.SecretField
@@ -108,7 +108,7 @@ fun EntryEditScreen(vm: VaultViewModel, id: String?, initialType: EntryType) {
         QrScanScreen(
             onResult = { text ->
                 totp = text
-                runCatching { Totp.parse(text) }.getOrNull()?.let { cfg ->
+                Totp.parseOrNull(text)?.let { cfg ->
                     if (title.isBlank()) cfg.issuer?.let { title = it }
                     if (username.isBlank()) cfg.account?.let { username = it }
                 }
@@ -156,10 +156,10 @@ fun EntryEditScreen(vm: VaultViewModel, id: String?, initialType: EntryType) {
             FilterChip(selected = type == EntryType.NOTE, onClick = { type = EntryType.NOTE }, label = { Text("Ghi chú bảo mật") })
         }
 
-        OutlinedTextField(title, { title = it }, label = { Text("Tên *") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        TrackedTextField(title, { title = it }, label = { Text("Tên *") }, singleLine = true, modifier = Modifier.fillMaxWidth())
 
         if (type == EntryType.LOGIN) {
-            OutlinedTextField(
+            TrackedTextField(
                 username, { username = it }, label = { Text("Username / email") }, singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                 modifier = Modifier.fillMaxWidth(),
@@ -167,7 +167,7 @@ fun EntryEditScreen(vm: VaultViewModel, id: String?, initialType: EntryType) {
             SecretField(password, { password = it }, "Mật khẩu", monospace = true, trailingExtra = {
                 IconButton(onClick = { showGenerator = true }) { Icon(Icons.Filled.AutoAwesome, "Tạo mật khẩu") }
             })
-            OutlinedTextField(
+            TrackedTextField(
                 url, { url = it }, label = { Text("Website URL") }, singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 modifier = Modifier.fillMaxWidth(),
@@ -182,10 +182,12 @@ fun EntryEditScreen(vm: VaultViewModel, id: String?, initialType: EntryType) {
             }
         }
 
-        OutlinedTextField(
+        TrackedTextField(
             notes, { notes = it },
             label = { Text(if (type == EntryType.NOTE) "Nội dung (recovery code, API key, Wi-Fi...)" else "Ghi chú") },
             minLines = if (type == EntryType.NOTE) 6 else 2,
+            // Tắt gợi ý / tự sửa: bàn phím không học nội dung ghi chú (recovery code, API key...)
+            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
             textStyle = if (type == EntryType.NOTE) MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace) else MaterialTheme.typography.bodyLarge,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -199,7 +201,7 @@ fun EntryEditScreen(vm: VaultViewModel, id: String?, initialType: EntryType) {
                 FilterChip(selected = category == c, onClick = { category = c }, label = { Text(Categories.label(c)) })
             }
         }
-        OutlinedTextField(
+        TrackedTextField(
             tagsText, { tagsText = it }, label = { Text("Tag (cách nhau bằng dấu phẩy)") },
             placeholder = { Text("work, github") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
         )
@@ -208,11 +210,11 @@ fun EntryEditScreen(vm: VaultViewModel, id: String?, initialType: EntryType) {
         fields.forEachIndexed { index, f ->
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(f.name, { f.name = it }, label = { Text("Tên trường") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    TrackedTextField(f.name, { f.name = it }, label = { Text("Tên trường") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     if (f.hidden) {
                         SecretField(f.value, { f.value = it }, "Giá trị")
                     } else {
-                        OutlinedTextField(f.value, { f.value = it }, label = { Text("Giá trị") }, modifier = Modifier.fillMaxWidth())
+                        TrackedTextField(f.value, { f.value = it }, label = { Text("Giá trị") }, modifier = Modifier.fillMaxWidth())
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Switch(checked = f.hidden, onCheckedChange = { f.hidden = it })

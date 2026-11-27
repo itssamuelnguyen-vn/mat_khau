@@ -18,3 +18,7 @@
 # Bouncy Castle: only the Argon2 generator is used, and it is referenced directly, so R8 can shrink the rest.
 -dontwarn javax.naming.**
 -dontwarn org.bouncycastle.**
+
+# kotlinx.serialization ships its own rules; keep the (small) model package anyway so a release-only JSON problem
+# can never make the vault unreadable.
+-keep class com.samuelcruz.matkhau.model.** { *; }

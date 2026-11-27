@@ -79,10 +79,23 @@ object SecurityAudit {
             if (header != null) CheckStatus.OK else CheckStatus.INFO,
         )
 
+        // Đọc thật cấu trúc DB: chỉ được có 2 bảng với đúng các cột/khóa đã biết, không có cột plaintext.
+        val layout = app.repository.storageLayout()
+        val knownMeta = setOf("vault_header", "biometric_wrapped_vek")
+        val metaKeys = layout.metaKeys
+        val metaCols = layout.metaColumns
+        val itemCols = layout.itemColumns
+        val layoutOk = layout.tables == listOf("items", "meta") && metaKeys.all { it in knownMeta } &&
+            metaCols == listOf("k", "v") && itemCols == listOf("id", "fmt", "nonce", "ct")
         checks += AuditCheck(
-            "Mật khẩu chính không được lưu",
-            "Chỉ lưu salt và VEK đã bọc. Không có hash mật khẩu nào để dò ngược.",
-            CheckStatus.OK,
+            "Mật khẩu chính không được lưu, DB không có plaintext",
+            if (layoutOk) {
+                "DB chỉ có meta(k, v) = {${metaKeys.joinToString()}} và items(id, fmt, nonce, ct). " +
+                    "Chỉ lưu salt và VEK đã bọc, không có hash mật khẩu nào để dò ngược."
+            } else {
+                "Cấu trúc DB khác dự kiến: bảng ${layout.tables}, meta$metaCols = $metaKeys, items$itemCols"
+            },
+            if (layoutOk) CheckStatus.OK else CheckStatus.WARNING,
         )
 
         checks += AuditCheck(
@@ -142,8 +155,12 @@ object SecurityAudit {
 
         checks += AuditCheck(
             "Không analytics, quảng cáo, đồng bộ cloud",
-            "App không chứa SDK nào thuộc loại này; không có server hay tài khoản",
-            CheckStatus.OK,
+            if (networkPerms.isEmpty()) {
+                "Không có quyền mạng nên không thư viện nào gửi được dữ liệu ra ngoài; không server, không tài khoản"
+            } else {
+                "APK có quyền mạng — không đảm bảo được điều này"
+            },
+            if (networkPerms.isEmpty()) CheckStatus.OK else CheckStatus.WARNING,
         )
         return checks
     }

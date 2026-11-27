@@ -20,7 +20,14 @@ class TotpConfig(
     val algorithm: TotpAlgorithm = TotpAlgorithm.SHA1,
     val issuer: String? = null,
     val account: String? = null,
-)
+) {
+    init {
+        // period = 0 sẽ chia cho 0; digits > 9 làm tràn phép modulo của HOTP.
+        require(digits in 6..8) { "digits" }
+        require(period in 1..300) { "period" }
+        require(secret.isNotEmpty()) { "secret" }
+    }
+}
 
 /** TOTP theo RFC 6238 (dựa trên HOTP RFC 4226), tính hoàn toàn offline. */
 object Totp {
@@ -67,8 +74,9 @@ object Totp {
             .associate { decode(it.substringBefore('=')).lowercase() to decode(it.substringAfter('=')) }
 
         val secret = decodeSecret(params["secret"] ?: throw FormatException("URI thiếu tham số secret"))
-        val digits = params["digits"]?.toIntOrNull() ?: 6
-        val period = params["period"]?.toIntOrNull() ?: 30
+        // Giá trị không đọc được thì báo lỗi, không lặng lẽ dùng mặc định (mã sinh ra sẽ sai).
+        val digits = params["digits"]?.let { it.toIntOrNull() ?: throw FormatException("digits không hợp lệ") } ?: 6
+        val period = params["period"]?.let { it.toIntOrNull() ?: throw FormatException("period không hợp lệ") } ?: 30
         val algorithm = when (params["algorithm"]?.uppercase()) {
             null, "SHA1" -> TotpAlgorithm.SHA1
             "SHA256" -> TotpAlgorithm.SHA256
@@ -83,10 +91,18 @@ object Totp {
         return TotpConfig(secret, digits, period, algorithm, issuer, account)
     }
 
+    /** Không bao giờ ném exception: được gọi trong lúc vẽ form và trên luồng phân tích camera. */
     fun isValid(input: String): Boolean = try {
         parse(input); true
-    } catch (e: FormatException) {
+    } catch (e: Exception) {
         false
+    }
+
+    /** Như [parse] nhưng trả null thay vì ném exception. */
+    fun parseOrNull(input: String): TotpConfig? = try {
+        parse(input)
+    } catch (e: Exception) {
+        null
     }
 
     private fun decodeSecret(text: String): ByteArray {
@@ -95,5 +111,10 @@ object Totp {
         return secret
     }
 
-    private fun decode(s: String): String = URLDecoder.decode(s.replace("+", "%2B"), "UTF-8")
+    /** URLDecoder ném IllegalArgumentException với "%" lỗi (vd. "%zz") — đổi thành FormatException để form không crash. */
+    private fun decode(s: String): String = try {
+        URLDecoder.decode(s.replace("+", "%2B"), "UTF-8")
+    } catch (e: IllegalArgumentException) {
+        throw FormatException("URI otpauth có ký tự % không hợp lệ")
+    }
 }

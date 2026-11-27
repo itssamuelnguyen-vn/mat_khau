@@ -22,7 +22,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -47,8 +46,13 @@ import com.samuelcruz.matkhau.ui.LockedScreen
 import com.samuelcruz.matkhau.ui.Screen
 import com.samuelcruz.matkhau.ui.VaultViewModel
 import com.samuelcruz.matkhau.ui.components.AppScaffold
+import com.samuelcruz.matkhau.ui.components.TrackedTextField
 import com.samuelcruz.matkhau.ui.components.ErrorText
 import com.samuelcruz.matkhau.ui.components.Hint
+import com.samuelcruz.matkhau.ui.components.LocalUserActivity
+import com.samuelcruz.matkhau.ui.components.trackUserActivity
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import com.samuelcruz.matkhau.ui.components.SecretField
 import com.samuelcruz.matkhau.ui.components.SectionTitle
 import com.samuelcruz.matkhau.ui.components.StrengthMeter
@@ -83,7 +87,8 @@ fun SettingsScreen(vm: VaultViewModel) {
             }
             Switch(
                 checked = vm.biometricEnabled,
-                enabled = bioSupported && activity != null,
+                // Đang bật thì luôn tắt được, kể cả khi máy tạm không dùng được sinh trắc học
+                enabled = activity != null && (bioSupported || vm.biometricEnabled),
                 onCheckedChange = { on ->
                     if (on && activity != null) vm.enableBiometric(activity) else vm.disableBiometric()
                 },
@@ -162,7 +167,7 @@ private fun <T> ChoiceDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            Column {
+            Column(Modifier.trackUserActivity(LocalUserActivity.current)) {
                 options.forEach { (value, label) ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -278,10 +283,12 @@ private fun RestoreBody(vm: VaultViewModel, parsed: com.samuelcruz.matkhau.core.
                 FilterChip(selected = useRecovery, onClick = { useRecovery = true; secret = "" }, label = { Text("Recovery Key") })
             }
             if (useRecovery) {
-                OutlinedTextField(
+                TrackedTextField(
                     secret, { secret = it.uppercase() },
                     label = { Text("Recovery Key của bản backup") },
                     textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+                    // Kiểu "password": bàn phím không học / gợi ý Recovery Key
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
                     modifier = Modifier.fillMaxWidth(),
                 )
             } else {

@@ -38,6 +38,8 @@ import com.samuelcruz.matkhau.core.generator.PasswordOptions
 import com.samuelcruz.matkhau.ui.VaultViewModel
 import com.samuelcruz.matkhau.ui.components.AppScaffold
 import com.samuelcruz.matkhau.ui.components.Hint
+import com.samuelcruz.matkhau.ui.components.LocalUserActivity
+import com.samuelcruz.matkhau.ui.components.trackUserActivity
 
 /** Trạng thái bộ sinh mật khẩu, dùng chung cho màn hình riêng và hộp thoại trong form. */
 private class GeneratorState {
@@ -77,7 +79,8 @@ private fun GeneratorPanel(vm: VaultViewModel, state: GeneratorState, onCopy: ((
         state.regenerate(words)
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val activity = LocalUserActivity.current
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.trackUserActivity(activity)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = !state.passphraseMode, onClick = { state.passphraseMode = false }, label = { Text("Mật khẩu") })
             FilterChip(selected = state.passphraseMode, onClick = { state.passphraseMode = true }, label = { Text("Cụm từ (passphrase)") })

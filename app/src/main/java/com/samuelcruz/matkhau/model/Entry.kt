@@ -33,6 +33,9 @@ data class Entry(
     val createdAt: Long,
     val updatedAt: Long,
 ) {
+    /** data class tự sinh toString() in cả mật khẩu/TOTP/ghi chú: ghi đè để không bao giờ lộ qua log hay lỗi. */
+    override fun toString(): String = "Entry(id=$id, type=$type)"
+
     /** Tìm kiếm trong RAM sau khi mở khóa. Không tìm theo mật khẩu/TOTP/ghi chú (spec 2.11). */
     fun matches(query: String): Boolean {
         if (query.isBlank()) return true

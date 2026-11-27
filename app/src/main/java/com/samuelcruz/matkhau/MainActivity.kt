@@ -1,5 +1,6 @@
 package com.samuelcruz.matkhau
 
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -29,6 +30,12 @@ class MainActivity : FragmentActivity() {
                 AppRoot(vm)
             }
         }
+    }
+
+    /** Activity không bị tạo lại khi đổi chế độ sáng/tối (configChanges), nên tự cập nhật màu icon thanh hệ thống. */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        enableEdgeToEdge()
     }
 
     override fun onUserInteraction() {

@@ -59,7 +59,8 @@ class BiometricKeyManager {
             val info = factory.getKeySpec(key, KeyInfo::class.java) as KeyInfo
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 info.securityLevel == KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT ||
-                    info.securityLevel == KeyProperties.SECURITY_LEVEL_STRONGBOX
+                    info.securityLevel == KeyProperties.SECURITY_LEVEL_STRONGBOX ||
+                    info.securityLevel == KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE
             } else {
                 @Suppress("DEPRECATION")
                 info.isInsideSecureHardware
@@ -101,7 +102,12 @@ class BiometricKeyManager {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val ALIAS = "localvault.biometric.v1"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
-        private const val BLOB_VERSION = 1
+        /** v2: ciphertext có AAD = [aad] (vaultId). Blob v1 (0.1.0, không AAD) bị từ chối => bật lại vân tay. */
+        private const val BLOB_VERSION = 2
+        private val AAD_CONTEXT = "localvault/biometric/v1".toByteArray(Charsets.US_ASCII)
+
+        /** AAD của blob vân tay: gắn VEK đã bọc với đúng vault (vaultId). */
+        fun aad(vaultId: ByteArray): ByteArray = AAD_CONTEXT + vaultId
 
         fun encodeBlob(iv: ByteArray, ciphertext: ByteArray): ByteArray =
             ByteWriter().u8(BLOB_VERSION).bytes(iv).bytes(ciphertext).toByteArray()

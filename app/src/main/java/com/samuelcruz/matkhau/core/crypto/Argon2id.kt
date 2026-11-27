@@ -20,7 +20,8 @@ data class KdfParams(
 
     companion object {
         const val MIN_MEMORY_KIB = 8 * 1024        // 8 MiB
-        const val MAX_MEMORY_KIB = 512 * 1024      // 512 MiB
+        // 256 MiB: app chỉ ghi 64 MiB; giới hạn này chặn file backup giả mạo làm hết RAM (OutOfMemoryError).
+        const val MAX_MEMORY_KIB = 256 * 1024      // 256 MiB
         const val MAX_ITERATIONS = 20
         const val MAX_PARALLELISM = 8
 

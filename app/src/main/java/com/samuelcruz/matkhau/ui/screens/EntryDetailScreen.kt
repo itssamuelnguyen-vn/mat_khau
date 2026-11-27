@@ -36,7 +36,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.samuelcruz.matkhau.core.format.FormatException
 import com.samuelcruz.matkhau.core.totp.Totp
 import com.samuelcruz.matkhau.core.totp.TotpConfig
 import com.samuelcruz.matkhau.model.Categories
@@ -118,13 +117,7 @@ fun EntryDetailScreen(vm: VaultViewModel, id: String) {
 /** Mã TOTP tự cập nhật mỗi giây, có thanh đếm ngược. */
 @Composable
 fun TotpCard(secret: String, onCopy: (String) -> Unit) {
-    val config: TotpConfig? = remember(secret) {
-        try {
-            Totp.parse(secret)
-        } catch (e: FormatException) {
-            null
-        }
-    }
+    val config: TotpConfig? = remember(secret) { Totp.parseOrNull(secret) }
     if (config == null) {
         ErrorText("Secret TOTP không hợp lệ — hãy sửa lại mục này")
         return

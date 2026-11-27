@@ -48,6 +48,25 @@ class VaultDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
         )
     }
 
+    /** Bảng của app (bỏ bảng nội bộ của SQLite / Android), sắp xếp theo tên. */
+    fun tables(): List<String> =
+        readableDatabase.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'android_metadata' ORDER BY name",
+            null,
+        ).use { c -> buildList { while (c.moveToNext()) add(c.getString(0)) } }
+
+    fun metaKeys(): List<String> =
+        readableDatabase.rawQuery("SELECT k FROM meta", null).use { c ->
+            buildList { while (c.moveToNext()) add(c.getString(0)) }
+        }
+
+    /** Tên các cột của một bảng (để màn hình Security kiểm tra thật là không có cột plaintext). */
+    fun columns(table: String): List<String> =
+        readableDatabase.rawQuery("PRAGMA table_info($table)", null).use { c ->
+            val name = c.getColumnIndexOrThrow("name")
+            buildList { while (c.moveToNext()) add(c.getString(name)) }
+        }
+
     fun deleteMeta(key: String) {
         writableDatabase.delete("meta", "k = ?", arrayOf(key))
     }

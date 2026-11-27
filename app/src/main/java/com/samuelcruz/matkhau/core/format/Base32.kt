@@ -35,7 +35,8 @@ object Base32 {
         for (c in input) {
             if (c == '=' || c == ' ' || c == '-' || c == '\n' || c == '\t') continue
             val v = if (c.code < 128) LOOKUP[c.code] else -1
-            if (v < 0) throw FormatException("Ký tự Base32 không hợp lệ: '$c'")
+            // Không trích ký tự vào thông báo: chuỗi đang giải mã có thể là secret.
+            if (v < 0) throw FormatException("Có ký tự không thuộc bảng Base32")
             buffer = (buffer shl 5) or v
             bits += 5
             if (bits >= 8) {

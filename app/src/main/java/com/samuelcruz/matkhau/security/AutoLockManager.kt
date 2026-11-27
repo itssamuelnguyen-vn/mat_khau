@@ -21,13 +21,25 @@ import androidx.lifecycle.LifecycleOwner
 class AutoLockManager(
     private val settings: AppSettings,
     private val isUnlocked: () -> Boolean,
-    private val lockNow: () -> Unit,
+    /** Tham số: có xóa clipboard ngay không (false khi khóa vì app đang ở nền). */
+    private val lockNow: (Boolean) -> Unit,
 ) : DefaultLifecycleObserver {
 
     private val handler = Handler(Looper.getMainLooper())
-    private val lockRunnable = Runnable { if (isUnlocked()) lockNow() }
+    private val lockRunnable = Runnable { if (isUnlocked()) lockNow(backgroundSince == 0L) }
     private var backgroundSince = 0L
     private var suspendedSince = 0L
+
+    /**
+     * Tạm dừng hẹn giờ "không thao tác" (vẫn khóa khi tắt màn hình / rời app), dùng khi màn hình đang hiện
+     * Recovery Key để người dùng chép tay mà không bị khóa giữa chừng.
+     */
+    private var inactivityPaused = false
+
+    fun pauseInactivityTimer(paused: Boolean) {
+        inactivityPaused = paused
+        reschedule()
+    }
 
     /** Gọi trước khi mở trình chọn file của hệ thống. */
     fun suspendForSystemPicker() {
@@ -44,10 +56,16 @@ class AutoLockManager(
 
     /** Lên lịch lại hạn khóa do không thao tác (chỉ khi đang ở foreground). */
     fun reschedule() {
+        // Ở nền: giữ nguyên hẹn giờ khóa do onStop đặt (không được hủy nó).
+        if (backgroundSince != 0L) return
         handler.removeCallbacks(lockRunnable)
         val timeout = settings.autoLockMillis
-        if (timeout > 0 && backgroundSince == 0L && isUnlocked()) {
-            handler.postDelayed(lockRunnable, timeout)
+        if (backgroundSince == 0L && isUnlocked()) {
+            when {
+                // Đang hiện Recovery Key: cho thời gian chép tay nhưng vẫn khóa sau tối đa MAX_PAUSE_MS.
+                inactivityPaused -> handler.postDelayed(lockRunnable, MAX_PAUSE_MS)
+                timeout > 0 -> handler.postDelayed(lockRunnable, timeout)
+            }
         }
     }
 
@@ -56,9 +74,10 @@ class AutoLockManager(
         val suspendedTooLong = suspendedSince != 0L && now - suspendedSince > MAX_SUSPEND_MS
         if (backgroundSince != 0L && (suspendedSince == 0L || suspendedTooLong)) {
             val timeout = settings.autoLockMillis
-            if (now - backgroundSince >= timeout && isUnlocked()) lockNow()
+            if (now - backgroundSince >= timeout && isUnlocked()) lockNow(true)
         }
-        if (suspendedTooLong) suspendedSince = 0L
+        // Quay lại app => hết lượt hoãn khóa, kể cả khi callback của trình chọn file không bao giờ chạy.
+        suspendedSince = 0L
         backgroundSince = 0L
         reschedule()
     }
@@ -73,7 +92,8 @@ class AutoLockManager(
         }
         val timeout = settings.autoLockMillis
         if (timeout == 0L) {
-            if (isUnlocked()) lockNow()
+            // Gọi cả khi chưa mở: lock() hủy luôn lần mở khóa còn đang chạy Argon2id.
+            lockNow(false)
         } else {
             handler.postDelayed(lockRunnable, timeout)
         }
@@ -81,5 +101,6 @@ class AutoLockManager(
 
     companion object {
         private const val MAX_SUSPEND_MS = 5 * 60_000L
+        private const val MAX_PAUSE_MS = 10 * 60_000L
     }
 }
