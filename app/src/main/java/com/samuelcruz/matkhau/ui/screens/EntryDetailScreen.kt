@@ -44,6 +44,8 @@ import com.samuelcruz.matkhau.core.totp.TotpConfig
 import com.samuelcruz.matkhau.core.generator.Strength
 import com.samuelcruz.matkhau.core.generator.StrengthEstimator
 import com.samuelcruz.matkhau.core.health.PasswordHealth
+import com.samuelcruz.matkhau.autofill.AppIdentity
+import androidx.compose.material3.ListItem
 import com.samuelcruz.matkhau.model.Categories
 import com.samuelcruz.matkhau.model.Entry
 import com.samuelcruz.matkhau.model.PasswordHistoryItem
@@ -106,6 +108,18 @@ fun EntryDetailScreen(vm: VaultViewModel, id: String) {
         if (entry.notes.isNotBlank()) {
             SectionTitle(if (entry.type == EntryType.NOTE) "Nội dung" else "Ghi chú")
             FieldRow("Ghi chú", entry.notes, secret = entry.type == EntryType.NOTE, onCopy = { vm.copy(context, "ghi chú", entry.notes) })
+        }
+
+        if (entry.linkedApps.isNotEmpty()) {
+            SectionTitle("Ứng dụng tự động điền")
+            entry.linkedApps.forEach { linked ->
+                val label = remember(linked.packageName) { AppIdentity.label(context, linked.packageName) }
+                ListItem(
+                    headlineContent = { Text(label) },
+                    supportingContent = { Text(linked.packageName) },
+                    trailingContent = { TextButton(onClick = { vm.unlinkApp(entry.id, linked.packageName) }) { Text("Bỏ liên kết") } },
+                )
+            }
         }
 
         if (entry.customFields.isNotEmpty()) {

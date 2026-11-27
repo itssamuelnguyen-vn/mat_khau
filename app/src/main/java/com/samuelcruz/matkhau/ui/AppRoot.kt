@@ -18,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -57,6 +58,13 @@ fun AppRoot(vm: VaultViewModel) {
     }
 
     CompositionLocalProvider(LocalUserActivity provides vm::userActivity) {
+    // Mỗi lần mở khóa VÀ mỗi lần app quay lại foreground: vault có thể vừa được mở từ màn hình tự động điền.
+    LaunchedEffect(unlocked) { if (unlocked) vm.ensureForcedFlows() }
+    LifecycleResumeEffect(unlocked) {
+        if (unlocked) vm.ensureForcedFlows()
+        onPauseOrDispose { }
+    }
+
     Box(Modifier.fillMaxSize()) {
         if (unlocked) {
             // Đang chạy tác vụ (lưu, đổi mật khẩu...): chặn Back để stack không bị đổi giữa chừng.

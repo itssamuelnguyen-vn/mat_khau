@@ -8,8 +8,31 @@ sealed interface AutofillTarget {
     /** Trang web trong một trình duyệt ĐÁNG TIN ([TrustedBrowsers]): tên miền do trình duyệt báo. */
     data class Web(val host: String, val scheme: String?, val browserPackage: String) : AutofillTarget
 
-    /** Ứng dụng Android: tên gói + SHA-256 chứng chỉ ký (null nếu không đọc được => không bao giờ tự khớp). */
-    data class App(val packageName: String, val certSha256: String?) : AutofillTarget
+    /**
+     * Ứng dụng Android: tên gói + SHA-256 chứng chỉ ký hiện tại ([certSha256], null nếu không đọc được => không
+     * bao giờ tự khớp) và mọi chứng chỉ trong lịch sử xoay vòng khóa ký ([acceptedCerts]) để app đổi khóa ký hợp lệ
+     * vẫn khớp liên kết cũ. [fromStore] = cài từ cửa hàng đã biết (Google Play...), false = cài ngoài / không rõ.
+     */
+    data class App(
+        val packageName: String,
+        val certSha256: String?,
+        val acceptedCerts: Set<String> = setOfNotNull(certSha256),
+        val fromStore: Boolean = false,
+    ) : AutofillTarget
+
+    /**
+     * Trang web trong một app CÓ TÊN GÓI của trình duyệt đã biết nhưng chưa được người dùng xác nhận (hoặc chứng
+     * chỉ khác lần xác nhận trước): chưa tin tên miền nó báo, không tự khớp mục nào. [certChanged] = đã từng tin
+     * gói này với chứng chỉ khác => rất có thể là app giả mạo.
+     */
+    data class UnverifiedBrowser(
+        val host: String,
+        val scheme: String?,
+        val packageName: String,
+        val certSha256: String?,
+        val fromStore: Boolean,
+        val certChanged: Boolean,
+    ) : AutofillTarget
 }
 
 /**
@@ -22,9 +45,10 @@ object AutofillMatcher {
         if (entry.type != EntryType.LOGIN) return false
         return when (target) {
             is AutofillTarget.Web -> DomainMatcher.matches(entry.url, target.host, target.scheme)
-            is AutofillTarget.App -> target.certSha256 != null && entry.linkedApps.any {
-                it.packageName == target.packageName && it.certSha256.equals(target.certSha256, ignoreCase = true)
+            is AutofillTarget.App -> target.certSha256 != null && entry.linkedApps.any { linked ->
+                linked.packageName == target.packageName && target.acceptedCerts.any { it.equals(linked.certSha256, ignoreCase = true) }
             }
+            is AutofillTarget.UnverifiedBrowser -> false
         }
     }
 
@@ -47,8 +71,10 @@ object AutofillMatcher {
 }
 
 /**
- * Trình duyệt được tin để báo đúng tên miền của trang. App khác tự báo "webDomain" thì bị bỏ qua
- * (coi như app thường): một app độc có thể nói dối là đang mở bank.com để xin mật khẩu ngân hàng.
+ * Tên gói của các trình duyệt được phép báo tên miền của trang. App khác tự báo "webDomain" thì bị bỏ qua (coi như
+ * app thường): một app độc có thể nói dối là đang mở bank.com để xin mật khẩu ngân hàng. Tên gói thôi CHƯA đủ (app
+ * cài ngoài có thể mạo danh tên gói của một trình duyệt máy không cài): người dùng còn phải xác nhận lần đầu, và
+ * chứng chỉ ký của trình duyệt được ghim (AppSettings.trustedBrowsers).
  */
 object TrustedBrowsers {
     val PACKAGES = setOf(

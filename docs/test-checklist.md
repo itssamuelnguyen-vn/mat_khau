@@ -1,4 +1,4 @@
-# Mật Khẩu 0.2.0: checklist thử trên điện thoại
+# Mật Khẩu 0.3.0: checklist thử trên điện thoại
 
 Đánh dấu `[x]` khi đạt. Mục nào sai: ghi lại bước làm, điều thấy được, và chụp màn hình bằng **máy khác** (app chặn
 chụp màn hình).
@@ -405,6 +405,103 @@ Secret TOTP dùng để thử: `JBSWY3DPEHPK3PXP`.
 - [ ] **N14 (P1): khóa khẩn cấp xóa clipboard**
   - Bước: copy một mật khẩu, rồi dùng ô khóa hoặc shortcut ngay.
   - Mong đợi: clipboard bị xóa ngay, không phải chờ 30 giây.
+
+## O. Nhập từ CSV (0.2.1)
+
+- [ ] **O1 (P0): xuất CSV từ app cũ**
+  - Bước: xuất file CSV từ app đang dùng, ví dụ:
+    - Bitwarden: Công cụ → Xuất kho → .csv;
+    - Google: passwords.google.com → Cài đặt → Xuất;
+    - KeePassXC: Cơ sở dữ liệu → Xuất → CSV.
+  - Bước: chép file sang điện thoại.
+  - Mong đợi: có file `.csv`.
+- [ ] **O2 (P0): xem trước khi nhập**
+  - Bước: Cài đặt → Chuyển từ app khác → Nhập từ file CSV → chọn file.
+  - Mong đợi:
+    - màn "Nhập từ CSV" hiện **đúng nguồn** (vd. "Bitwarden") và số mục sẽ nhập;
+    - danh sách xem trước chỉ có tên, username, URL, **không** hiện mật khẩu.
+- [ ] **O3 (P0): nhập và kiểm tra dữ liệu**
+  - Bước: bấm "Nhập N mục", mở vài mục để so với app cũ.
+  - Mong đợi:
+    - username, mật khẩu, URL, ghi chú, mã 2FA khớp với app cũ;
+    - thư mục cũ thành tag;
+    - trường tùy chỉnh còn đủ.
+- [ ] **O4 (P0): xóa file CSV sau khi nhập**
+  - Bước: sau khi nhập, bấm "Xóa file CSV".
+  - Mong đợi: báo "Đã xóa file CSV", hoặc hướng dẫn xóa bằng tay. Mở trình quản lý file thì không còn file (kiểm tra cả Thùng rác).
+- [ ] **O5 (P1): nhập lại cùng file**
+  - Bước: nhập lại đúng file đó lần nữa.
+  - Mong đợi: báo "N mục đã có trong vault: bỏ qua", không tạo mục trùng.
+- [ ] **O6 (P1): file lưu lại bằng Excel**
+  - Bước: mở CSV bằng Excel và lưu lại kiểu "CSV (Comma delimited)", rồi nhập file đó.
+  - Mong đợi: nếu file có chữ có dấu thì báo "File không phải UTF-8…", không nhập sai chữ.
+- [ ] **O7 (P1): khóa giữa chừng**
+  - Bước: đang ở màn xem trước thì tắt màn hình, rồi mở lại.
+  - Mong đợi: vault đã khóa, màn xem trước biến mất, phải chọn lại file.
+
+## P. Tự động điền (0.3.0)
+
+- [ ] **P1 (P0): bật dịch vụ tự động điền**
+  - Bước: Cài đặt → Tự động điền → "Dịch vụ tự động điền", chọn **Mật Khẩu**, rồi quay lại app.
+  - Mong đợi: dòng đổi thành "Đang dùng Mật Khẩu…"; màn Bảo mật cũng báo "Tự động điền: Đang bật".
+- [ ] **P2 (P0): bật cho Chrome**
+  - Chỉ làm nếu dùng Chrome.
+  - Bước: Chrome → Cài đặt → Mật khẩu và tự động điền → chọn "Tự động điền bằng dịch vụ khác", khởi động lại Chrome.
+  - Mong đợi: lưu được lựa chọn.
+- [ ] **P3 (P0): đề xuất trên trang web khi vault đang mở**
+  - Bước: mở Mật Khẩu (vault mở). Trong Chrome hoặc Firefox, vào trang đăng nhập github.com (đã có mục GitHub với URL `https://github.com`) và chạm ô username.
+  - Mong đợi:
+    - danh sách đề xuất có dòng 🔒 "GitHub · me@example.com" và dòng "Chọn mục khác…";
+    - chọn GitHub thì cả username lẫn mật khẩu được điền.
+- [ ] **P4 (P0): đề xuất khi vault đang khóa**
+  - Bước: khóa vault, quay lại trang đăng nhập và chạm ô.
+  - Mong đợi:
+    - chỉ có 1 dòng "Mở khóa Mật Khẩu – để điền vào github.com";
+    - chọn nó thì hiện màn mở khóa (vân tay hoặc mật khẩu), mở xong thấy GitHub trong "Khớp với trang này";
+    - chọn GitHub thì form được điền.
+- [ ] **P5 (P0): chống phishing trên web**
+  - Bước: vào một trang đăng nhập khác tên miền (vd. gitlab.com) → "Chọn mục khác…" → chọn mục GitHub.
+  - Mong đợi:
+    - hộp thoại "⚠ Đã chặn tự động điền" nêu rõ trang đang mở và tên miền đã lưu;
+    - **không có nút điền**.
+- [ ] **P6 (P1): gán tên miền cho mục chưa có URL**
+  - Bước: tạo mục không có URL, vào trang đăng nhập → "Chọn mục khác…" → chọn mục đó.
+  - Mong đợi:
+    - hộp thoại "Gán trang này…" hiện đúng tên miền;
+    - bấm "Gán & điền" thì form được điền, và lần sau mục đó tự xuất hiện trong đề xuất.
+- [ ] **P7 (P0): app lần đầu cần liên kết**
+  - Bước: mở một app có màn đăng nhập (vd. app ngân hàng hoặc app GitHub), chạm ô đăng nhập → "Chọn mục khác…" → chọn mục tương ứng.
+  - Mong đợi:
+    - hộp thoại hiện tên app, tên gói, chứng chỉ;
+    - bấm "Liên kết & điền" thì form được điền.
+- [ ] **P8 (P0): app đã liên kết thì tự đề xuất**
+  - Bước: mở lại app đó, chạm ô đăng nhập.
+  - Mong đợi:
+    - mục vừa liên kết hiện thẳng trong đề xuất;
+    - trong Mật Khẩu, màn chi tiết mục có phần "Ứng dụng tự động điền" với tên app và nút "Bỏ liên kết".
+- [ ] **P9 (P1): bỏ liên kết**
+  - Bước: bấm "Bỏ liên kết", quay lại app kia.
+  - Mong đợi: mục không còn được đề xuất tự động.
+- [ ] **P10 (P0): lưu đăng nhập mới**
+  - Bước: đăng nhập vào một trang hoặc app chưa có trong vault, gõ tay username và mật khẩu rồi bấm đăng nhập.
+  - Mong đợi:
+    - Android hỏi lưu vào Mật Khẩu; chọn Lưu thì hiện màn "Lưu đăng nhập" với tên mục gợi sẵn;
+    - bấm "Lưu mục mới" thì hiện thông báo "Đã lưu vào Mật Khẩu";
+    - trong app có mục mới với URL đúng (web) hoặc đã liên kết app.
+- [ ] **P11 (P1): cập nhật mật khẩu**
+  - Bước: đổi mật khẩu trên một website đã lưu, đăng nhập lại bằng mật khẩu mới qua form, rồi chọn lưu.
+  - Mong đợi:
+    - màn lưu đề nghị "Cập nhật mật khẩu cho …";
+    - sau khi cập nhật, mật khẩu cũ nằm trong Lịch sử mật khẩu.
+- [ ] **P12 (P1): không lưu**
+  - Bước: ở màn "Lưu đăng nhập", bấm "Không lưu" hoặc Back.
+  - Mong đợi: không có mục mới; màn hình đóng.
+- [ ] **P13 (P0): không chụp được màn tự động điền**
+  - Bước: thử chụp màn hình ở màn mở khóa / chọn mục của tự động điền.
+  - Mong đợi: không chụp được hoặc ảnh đen.
+- [ ] **P14 (P1): tự khóa sau khi điền**
+  - Bước: Tự khóa sau = "Ngay khi rời app", điền một lần, rồi mở app Mật Khẩu.
+  - Mong đợi: vault đã khóa (vì vừa rời app sau khi điền).
 
 ## M. Cài bản mới đè lên (làm khi có bản 0.1.2+)
 

@@ -1,6 +1,11 @@
 package com.samuelcruz.matkhau.ui.screens
 
 import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import android.view.autofill.AutofillManager
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -95,6 +100,44 @@ fun SettingsScreen(vm: VaultViewModel) {
                 enabled = activity != null && (bioSupported || vm.biometricEnabled),
                 onCheckedChange = { on ->
                     if (on && activity != null) vm.enableBiometric(activity) else vm.disableBiometric()
+                },
+            )
+        }
+
+        SectionTitle("Tự động điền")
+        // Đọc lại mỗi lần quay về màn hình (người dùng vừa bật / tắt trong Cài đặt hệ thống).
+        var autofillOn by remember { mutableStateOf(false) }
+        LifecycleResumeEffect(Unit) {
+            autofillOn = context.getSystemService(AutofillManager::class.java)?.hasEnabledAutofillServices() == true
+            onPauseOrDispose { }
+        }
+        SettingRow(
+            "Dịch vụ tự động điền",
+            if (autofillOn) "Đang dùng Mật Khẩu. Bấm để đổi trong Cài đặt hệ thống" else "Đang tắt. Bấm để chọn Mật Khẩu làm dịch vụ tự động điền",
+        ) {
+            vm.suspendAutoLock()
+            val intent = Intent(Settings.ACTION_REQUEST_SET_AUTOFILL_SERVICE).setData(Uri.parse("package:${context.packageName}"))
+            runCatching { context.startActivity(intent) }.onFailure {
+                runCatching { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
+            }
+        }
+        Hint(
+            "Chỉ đề xuất mục khớp đúng tên miền (trang web) hoặc đúng ứng dụng đã liên kết, kiểm tra cả chứng chỉ ký. " +
+                "Chrome: Cài đặt của Chrome → Mật khẩu và tự động điền → chọn \"Tự động điền bằng dịch vụ khác\".",
+        )
+
+        // Trình duyệt đã xác nhận cho tự động điền (ghim chứng chỉ): xem và bỏ tin.
+        var trusted by remember { mutableStateOf(vm.settings.trustedBrowsers()) }
+        LifecycleResumeEffect(Unit) {
+            trusted = vm.settings.trustedBrowsers()
+            onPauseOrDispose { }
+        }
+        trusted.forEach { pkg ->
+            ListItem(
+                headlineContent = { Text("Tin: " + com.samuelcruz.matkhau.autofill.AppIdentity.label(context, pkg)) },
+                supportingContent = { Text(pkg) },
+                trailingContent = {
+                    TextButton(onClick = { vm.settings.untrustBrowser(pkg); trusted = vm.settings.trustedBrowsers() }) { Text("Bỏ tin") }
                 },
             )
         }

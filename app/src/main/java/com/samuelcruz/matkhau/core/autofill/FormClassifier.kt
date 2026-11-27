@@ -18,9 +18,12 @@ data class FormField(
     val isTextField: Boolean = true,
 )
 
-/** Kết quả: ô username (nếu có) và các ô mật khẩu (ô thứ hai thường là "nhập lại mật khẩu" khi đăng ký). */
-data class LoginForm(val username: Int?, val passwords: List<Int>) {
-    val isEmpty: Boolean get() = username == null && passwords.isEmpty()
+/**
+ * Kết quả: ô username (nếu có), ô mật khẩu HIỆN TẠI (để điền) và ô mật khẩu MỚI (form đổi mật khẩu / đăng ký:
+ * không điền mật khẩu cũ vào, nhưng khi lưu thì lấy giá trị ở đây).
+ */
+data class LoginForm(val username: Int?, val passwords: List<Int>, val newPasswords: List<Int> = emptyList()) {
+    val isEmpty: Boolean get() = username == null && passwords.isEmpty() && newPasswords.isEmpty()
 }
 
 object FormClassifier {
@@ -36,6 +39,11 @@ object FormClassifier {
     private const val TEXT_WEB_EMAIL = 0x000000d0
     private const val NUMBER_PASSWORD = 0x00000010
 
+    /** Ô nhập mật khẩu MỚI / nhập lại (form đổi mật khẩu, đăng ký). */
+    private val NEW_PASSWORD_WORDS = listOf(
+        "new-password", "new password", "newpassword", "new_password", "confirm", "repeat", "retype", "re-enter",
+        "mật khẩu mới", "mat khau moi", "nhập lại", "nhap lai", "xác nhận", "xac nhan",
+    )
     private val PASSWORD_WORDS = listOf("password", "passwd", "passcode", "pwd", "mật khẩu", "mat khau", "matkhau", "mật mã")
     private val USERNAME_WORDS = listOf(
         "username", "user name", "userid", "user_id", "login", "email", "e-mail", "account", "phone", "mobile",
@@ -46,14 +54,23 @@ object FormClassifier {
 
     fun classify(fields: List<FormField>): LoginForm {
         val candidates = fields.filter { it.isTextField && !isIgnored(it) }
-        val passwords = candidates.filter { isPassword(it) }.map { it.index }
-        var username = candidates.firstOrNull { it.index !in passwords && isUsername(it) }?.index
-        if (username == null && passwords.isNotEmpty()) {
+        val allPasswords = candidates.filter { isPassword(it) }
+        val newOnes = allPasswords.filter { isNewPassword(it) }.map { it.index }
+        var current = allPasswords.map { it.index }.filterNot { it in newOnes }
+        var new = newOnes
+        // Form đăng ký không có gợi ý: "Mật khẩu" + "Nhập lại" => ô đầu là mật khẩu hiện tại để điền / lưu.
+        if (current.isEmpty() && new.size > 1) { current = new.take(1); new = new.drop(1) }
+        val passwordIdx = current + new
+        var username = candidates.firstOrNull { it.index !in passwordIdx && isUsername(it) }?.index
+        if (username == null && passwordIdx.isNotEmpty()) {
             // Không ô nào tự nhận là username: lấy ô chữ ngay TRƯỚC ô mật khẩu đầu tiên (form đăng nhập thường gặp).
-            username = candidates.lastOrNull { it.index < passwords.first() && it.index !in passwords }?.index
+            username = candidates.lastOrNull { it.index < passwordIdx.min() && it.index !in passwordIdx }?.index
         }
-        return LoginForm(username, passwords.take(2))
+        return LoginForm(username, current.take(2), new.take(2))
     }
+
+    private fun isNewPassword(f: FormField): Boolean =
+        words(f).any { w -> NEW_PASSWORD_WORDS.any { w.contains(it) } }
 
     private fun words(f: FormField) = (f.hints + f.htmlAttrs + f.texts + listOfNotNull(f.htmlType)).map { it.lowercase() }
 
@@ -69,7 +86,7 @@ object FormClassifier {
         val cls = f.inputType and TYPE_MASK_CLASS
         val variation = f.inputType and TYPE_MASK_VARIATION
         if (cls == TYPE_CLASS_TEXT && variation in setOf(TEXT_PASSWORD, TEXT_VISIBLE_PASSWORD, TEXT_WEB_PASSWORD)) return true
-        if (cls == TYPE_CLASS_NUMBER && variation == NUMBER_PASSWORD) return true
+        // Ô số dạng mật khẩu (NUMBER_PASSWORD) thường là mã PIN / OTP: chỉ coi là mật khẩu khi tên ô nói vậy.
         return (f.htmlAttrs + f.texts).any { t -> PASSWORD_WORDS.any { t.lowercase().contains(it) } }
     }
 

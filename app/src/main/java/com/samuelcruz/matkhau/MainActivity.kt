@@ -22,6 +22,8 @@ class MainActivity : FragmentActivity() {
         // Chặn chụp màn hình, quay màn hình, và ảnh xem trước trong danh sách app gần đây (spec 2.17).
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) setRecentsScreenshotEnabled(false)
+        // Chống tapjacking: app khác không phủ cửa sổ nổi lên màn hình của vault (Android 12+).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) window.setHideOverlayWindows(true)
 
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)

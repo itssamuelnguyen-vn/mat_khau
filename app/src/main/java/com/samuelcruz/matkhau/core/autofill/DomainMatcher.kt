@@ -5,9 +5,12 @@ import java.net.IDN
 /**
  * Chống phishing khi tự động điền (spec 4.2): chỉ điền mục đã lưu cho ĐÚNG website đang mở.
  *
- * So "tên miền gốc" (registrable domain): accounts.google.com và mail.google.com cùng gốc google.com
- * nên khớp; accounts-go0gle.example thì không. Chữ giống nhau nhưng khác bảng mã (Cyrillic "о" thay "o")
- * được đổi sang punycode (xn--…) nên không bao giờ trùng tên miền thật. Không chắc chắn => không khớp.
+ * Khớp CHẶT: trang phải là đúng tên miền đã lưu hoặc một tên miền con của nó ("www." ở URL đã lưu được bỏ).
+ * Lưu "https://github.com" thì gist.github.com khớp; lưu "https://mail.google.com" thì accounts.google.com
+ * KHÔNG khớp (muốn dùng cho mọi trang con, lưu URL là tên miền gốc "google.com"). Không so "tên miền gốc"
+ * tự đoán vì app offline không có danh sách Public Suffix đầy đủ: đoán sai đuôi (id.vn, duckdns.org,
+ * ts.net...) sẽ cho hai website khác chủ trùng nhau. Chữ giống nhau khác bảng mã (Cyrillic "о") được đổi sang
+ * punycode (xn--…) nên không bao giờ trùng tên miền thật. Không chắc chắn => không khớp.
  */
 object DomainMatcher {
     /**
@@ -22,7 +25,30 @@ object DomainMatcher {
         "github.io", "gitlab.io", "blogspot.com", "vercel.app", "netlify.app", "pages.dev", "workers.dev",
         "web.app", "firebaseapp.com", "herokuapp.com", "azurewebsites.net", "appspot.com", "cloudfront.net",
         "s3.amazonaws.com", "glitch.me", "repl.co", "onrender.com", "fly.dev",
+        "id.vn", "io.vn", "ts.net", "duckdns.org", "ddns.net", "no-ip.org", "ngrok-free.app", "ngrok.io",
+        "trycloudflare.com", "r2.dev", "surge.sh", "webflow.io", "amplifyapp.com", "wixsite.com", "wordpress.com",
+        "myshopify.com", "carrd.co", "notion.site", "sites.google.com", "translate.goog",
     )
+
+    /**
+     * Các URL có thể lưu cho trang [host] (để người dùng chọn): đúng tên miền này, rồi từng tên miền cha còn ít nhất
+     * 2 nhãn và không phải một đuôi dùng chung (com.vn, github.io...). "m.facebook.com" → [m.facebook.com,
+     * facebook.com]; "ebank.x.com.vn" → [ebank.x.com.vn, x.com.vn].
+     */
+    fun saveCandidates(host: String): List<String> {
+        val h = hostOf(host)?.removePrefix("www.") ?: return emptyList()
+        if (isIpAddress(h) || !h.contains('.')) return listOf(h)
+        val labels = h.split('.')
+        val out = mutableListOf(h)
+        var drop = 1
+        while (labels.size - drop >= 2) {
+            val parent = labels.drop(drop).joinToString(".")
+            if (parent in MULTI_PART_SUFFIXES) break   // không bao giờ đề nghị chính một đuôi dùng chung
+            out += parent
+            drop++
+        }
+        return out
+    }
 
     /** Tên miền (chữ thường, punycode) của một URL hoặc tên miền trần; null nếu không đọc được. */
     fun hostOf(url: String): String? {
@@ -63,13 +89,21 @@ object DomainMatcher {
      * Mục có [savedUrl] có được điền vào trang [requestHost] (scheme [requestScheme]) không?
      * Mục lưu cho https mà trang đang là http => KHÔNG (mật khẩu sẽ đi qua kết nối không mã hóa).
      */
-    fun matches(savedUrl: String, requestHost: String, requestScheme: String?): Boolean {
-        val saved = hostOf(savedUrl) ?: return false
+    fun matches(savedUrl: String, requestHost: String, requestScheme: String?): Boolean =
+        hostMatches(savedUrl, requestHost) && !isInsecureDowngrade(savedUrl, requestScheme)
+
+    /** Chỉ phần tên miền: đúng tên miền đã lưu hoặc tên miền con của nó. */
+    fun hostMatches(savedUrl: String, requestHost: String): Boolean {
+        val saved = hostOf(savedUrl)?.removePrefix("www.") ?: return false
         val request = hostOf(requestHost) ?: return false
-        if (requestScheme.equals("http", ignoreCase = true) && schemeOf(savedUrl) == "https") return false
         if (isIpAddress(saved) || isIpAddress(request)) return saved == request
-        return baseDomain(saved) == baseDomain(request)
+        if (!saved.contains('.')) return request == saved   // "localhost", "router"
+        return request == saved || request.removePrefix("www.") == saved || request.endsWith(".$saved")
     }
+
+    /** Đã lưu cho https nhưng trang đang mở bằng http. */
+    fun isInsecureDowngrade(savedUrl: String, requestScheme: String?): Boolean =
+        requestScheme.equals("http", ignoreCase = true) && schemeOf(savedUrl) == "https"
 
     private fun isIpAddress(host: String): Boolean =
         host.contains(':') || host.split('.').let { p -> p.size == 4 && p.all { it.toIntOrNull() in 0..255 } }

@@ -139,6 +139,19 @@ object SecurityAudit {
             CheckStatus.OK,
         )
 
+        val autofillOn = activity.getSystemService(android.view.autofill.AutofillManager::class.java)
+            ?.hasEnabledAutofillServices() == true
+        checks += AuditCheck(
+            "Tự động điền",
+            if (autofillOn) {
+                "Đang bật. Chỉ điền vào đúng tên miền đã lưu, hoặc đúng app đã liên kết (cùng tên gói và chứng chỉ ký); " +
+                    "mật khẩu chỉ được đưa ra sau khi bạn chọn mục."
+            } else {
+                "Đang tắt"
+            },
+            CheckStatus.INFO,
+        )
+
         val keyguard = activity.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         checks += AuditCheck(
             "Khóa màn hình điện thoại",

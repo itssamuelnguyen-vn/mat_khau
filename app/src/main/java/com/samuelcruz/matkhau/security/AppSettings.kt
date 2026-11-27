@@ -27,7 +27,22 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_MUST_CHANGE_PASSWORD, false)
         set(value) = prefs.edit().putBoolean(KEY_MUST_CHANGE_PASSWORD, value).apply()
 
+    /**
+     * Trình duyệt người dùng đã xác nhận cho tự động điền: tên gói -> SHA-256 chứng chỉ ký lúc xác nhận.
+     * Không phải bí mật, nhưng quyết định tên miền nào được tin (chống app giả mạo tên gói trình duyệt).
+     */
+    fun trustedBrowserCert(packageName: String): String? = prefs.getString(KEY_BROWSER_PREFIX + packageName, null)
+
+    fun trustBrowser(packageName: String, certSha256: String) =
+        prefs.edit().putString(KEY_BROWSER_PREFIX + packageName, certSha256).apply()
+
+    fun trustedBrowsers(): List<String> =
+        prefs.all.keys.filter { it.startsWith(KEY_BROWSER_PREFIX) }.map { it.removePrefix(KEY_BROWSER_PREFIX) }.sorted()
+
+    fun untrustBrowser(packageName: String) = prefs.edit().remove(KEY_BROWSER_PREFIX + packageName).apply()
+
     companion object {
+        private const val KEY_BROWSER_PREFIX = "trusted_browser:"
         private const val KEY_MUST_CHANGE_PASSWORD = "must_change_password"
         private const val KEY_RECOVERY_PENDING = "recovery_key_pending"
         private const val KEY_AUTO_LOCK = "auto_lock_ms"

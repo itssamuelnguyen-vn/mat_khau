@@ -8,6 +8,9 @@ Mọi dữ liệu được mã hóa ngay trên điện thoại bằng mật kh�
 - Tìm kiếm, lọc theo phân loại, **yêu thích** (ghim lên đầu), sinh mật khẩu / cụm từ (passphrase)
 - **Lịch sử mật khẩu** (dùng lại bản cũ), **sức khỏe mật khẩu**: yếu, dùng chung, lâu chưa đổi, thiếu 2FA
 - **Khóa khẩn cấp**: ô "Khóa Mật Khẩu" trong Cài đặt nhanh, hoặc giữ biểu tượng app → "Khóa ngay"
+- **Tự động điền** vào app và trình duyệt, **chống phishing**: chỉ đề xuất đúng tên miền / đúng app (kiểm tra chứng
+  chỉ ký), tên miền lạ thì chặn; lưu đăng nhập mới hoặc cập nhật mật khẩu ngay khi đăng nhập
+- **Nhập từ CSV** của Bitwarden, Chrome / Google, Firefox, KeePass…
 - Mở bằng vân tay / khuôn mặt (Android Keystore), Recovery Key khi quên mật khẩu chính
 - Tự khóa, tự xóa clipboard, chặn chụp màn hình, màn hình kiểm tra bảo mật
 - Backup mã hóa (`.lvbackup`) mở được bằng mật khẩu chính hoặc Recovery Key, khôi phục được trên máy khác

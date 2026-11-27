@@ -42,6 +42,13 @@ core/         pure Kotlin, no Android, JVM-tested
   generator/  PasswordGenerator (SecureRandom, BIP39 passphrases), StrengthEstimator (zxcvbn-like: common /
               leet passwords, keyboard runs, sequences, repeats, years, dates → bits + Vietnamese warnings)
   health/     PasswordHealth (weak, reused, older than 1 year, missing 2FA / URL, score)
+  importer/   Csv (RFC 4180) + CsvImporter (Bitwarden, Chrome, Firefox, KeePass(XC), generic by header names;
+              strict UTF-8 / UTF-16 BOM decode, unknown columns → custom fields, duplicates skipped)
+  autofill/   DomainMatcher (registrable domain, punycode, multi-part suffixes, no https→http), FormClassifier
+              (username / password fields from hints, HTML, inputType, Vietnamese labels), AutofillMatcher +
+              TrustedBrowsers
+autofill/     MatKhauAutofillService, AutofillActivity (+ AutofillUi: unlock, pick, link, save), StructureParser
+              (AssistStructure → FormField), AppIdentity (label + signing-cert SHA-256, needs QUERY_ALL_PACKAGES)
   qr/         QrDecoder (ZXing on a luminance frame)
 data/         VaultDatabase (SQLiteOpenHelper: meta + items), VaultRepository (session, CRUD, backup; Dispatchers.IO)
 model/        Entry (serialized to JSON then encrypted as a whole; favorite, passwordUpdatedAt, passwordHistory
@@ -113,6 +120,30 @@ ui/           VaultViewModel (screen stack + all actions), AppRoot (router), scr
 - **Security screen** checks everything at runtime (PackageManager permissions, window flags, KeyInfo, keyguard,
   camera permission), never hard-coded ticks.
 
+- **Autofill:** every dataset is an *authentication* dataset pointing at `AutofillActivity`, so no password reaches
+  the system until the user picks one. The service parses the system-provided `AssistStructure` and freezes the
+  target + field ids into each PendingIntent (`ParsedScreen.writeTo`; fill-in extras cannot override them; a random
+  data URI per intent so a stale PendingIntent is never reused); the activity never re-reads the structure the client
+  sends and rejects a `callingActivity` from another package. A browser package never becomes an App target.
+  Both activities hide other apps' overlay windows (tapjacking).
+  - Web: only from `TrustedBrowsers` package names **and** after the user confirmed that browser, pinning its
+    signing cert (`AppSettings.trustedBrowserCert`); otherwise `UnverifiedBrowser` (matches nothing, shows a trust
+    card with installer + cert, warns loudly when the cert changed; trust is revocable in Settings, cert rotation
+    history accepted). "From a store" = installer in a known-store list AND that installer is a system app. Domain match is strict (`DomainMatcher`):
+    same host or a subdomain of the saved host, `www.` ignored, never https→http; no guessed registrable domain.
+    A non-matching web entry is blocked; an entry without URL may be given the current domain after a warning.
+    Save / assign let the user pick the exact host or a parent (`DomainMatcher.saveCandidates`, never a shared suffix).
+  - App: only entries the user linked to that package **and** signing cert (`Entry.linkedApps`; cert rotation history
+    accepted). Name-based suggestions only for apps installed from a known store; sideloaded apps get a warning.
+  - Forms: current vs new password fields are told apart; fill goes to current, save prefers the new value.
+  - Save: credentials stay in RAM (`MatKhauApp.pendingAutofillSave`, 10 min expiry, nonce-bound to its intent,
+    cleared on lock (the save screen closes) or when that save screen closes), never in an Intent; username is
+    editable (two-step logins).
+  - `VaultViewModel.hostIsAutofill` skips the forced flows there; the main app runs them via `ensureForcedFlows()`
+    on every unlock and every resume.
+- **CSV import:** preview, then one transaction (`VaultDatabase.insertItems`); the plaintext preview is dropped on
+  lock / back; afterwards the user is pushed to delete the CSV file.
+
 ## Known limits
 
 Strings (decrypted entries, typed passwords) cannot be wiped from RAM, only the VEK is; clipboard clearing is best
@@ -122,7 +153,6 @@ keyboard / OEM clipboard manager could change.
 
 ## Next
 
-Done from Phase 2 / 3: password history, favourites, password health, panic lock (tile + shortcut). Left, by
-the owner's choice after testing 0.2.0 on the phone: Autofill + phishing protection, CSV import (Bitwarden /
-KeePass / Chrome). Not planned: decoy vault, hardware FIDO2 keys (no platform API), passkeys / multiple vaults
-unless asked.
+Done from Phase 2 / 3: password history, favourites, password health, panic lock (tile + shortcut), CSV import,
+Autofill with phishing protection. Not planned: decoy vault, hardware FIDO2 keys (no platform API), passkeys /
+multiple vaults unless asked; inline (keyboard) autofill suggestions could come later.

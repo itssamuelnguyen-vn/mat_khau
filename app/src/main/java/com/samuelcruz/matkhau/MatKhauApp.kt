@@ -30,6 +30,10 @@ class MatKhauApp : Application() {
         private set
     val biometric = BiometricKeyManager()
 
+    /** Đăng nhập vừa gửi trên app / trang khác, chờ người dùng xác nhận lưu (tự động điền). Chỉ trong RAM. */
+    @Volatile
+    var pendingAutofillSave: com.samuelcruz.matkhau.autofill.PendingSave? = null
+
     /** Coroutine scope sống cùng app (cho việc đọc DB lúc khởi động). */
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -60,6 +64,7 @@ class MatKhauApp : Application() {
      */
     fun lockNow(clearClipboard: Boolean = true) {
         if (clearClipboard) SecureClipboard.clearIfPending(this)
+        pendingAutofillSave = null
         // Luôn gọi lock(): kể cả khi chưa mở, nó hủy luôn lần mở khóa còn đang chạy Argon2id.
         repository.lock()
     }

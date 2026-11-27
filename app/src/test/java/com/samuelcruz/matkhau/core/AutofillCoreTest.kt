@@ -23,7 +23,14 @@ class AutofillCoreTest {
     fun domain_matchesSameSiteOnly() {
         fun m(saved: String, host: String, scheme: String? = "https") = DomainMatcher.matches(saved, host, scheme)
         assertTrue(m("https://accounts.google.com", "accounts.google.com"))
-        assertTrue(m("https://accounts.google.com", "mail.google.com"))      // cùng gốc google.com
+        // Khớp CHẶT: đúng tên miền hoặc tên miền con của URL đã lưu (không tự đoán "tên miền gốc")
+        assertFalse(m("https://accounts.google.com", "mail.google.com"))
+        assertTrue(m("https://google.com", "mail.google.com"))
+        assertTrue(m("https://github.com", "gist.github.com"))
+        assertFalse(m("https://gist.github.com", "github.com"))
+        // Đuôi không có trong danh sách (id.vn, duckdns.org, ts.net...) không làm hai website khác chủ trùng nhau
+        assertFalse(m("https://myshop.id.vn", "evil.id.vn"))
+        assertFalse(m("https://nas.duckdns.org", "evil.duckdns.org"))
         assertTrue(m("github.com", "github.com"))                            // URL không có scheme
         assertTrue(m("https://www.vietcombank.com.vn/login", "vcbdigibank.vietcombank.com.vn"))
         assertTrue(m("https://GitHub.com:443/x?y", "GITHUB.COM."))
@@ -42,6 +49,14 @@ class AutofillCoreTest {
         assertFalse(m("http://192.168.1.1", "192.168.1.2", scheme = "http"))
         assertFalse(m("", "github.com"))
         assertFalse(m("androidapp://com.github.android", "github.com"))
+        // Phạm vi đề nghị khi lưu: đúng trang, rồi tên miền cha; không bao giờ là một đuôi dùng chung
+        assertEquals(listOf("m.facebook.com", "facebook.com"), DomainMatcher.saveCandidates("m.facebook.com"))
+        assertEquals(listOf("ebank.x.com.vn", "x.com.vn"), DomainMatcher.saveCandidates("ebank.x.com.vn"))
+        assertEquals(listOf("alice.github.io"), DomainMatcher.saveCandidates("alice.github.io"))
+        assertEquals(listOf("myshop.id.vn"), DomainMatcher.saveCandidates("www.myshop.id.vn"))
+        assertEquals(listOf("github.com"), DomainMatcher.saveCandidates("github.com"))
+        assertEquals(listOf("192.168.1.1"), DomainMatcher.saveCandidates("192.168.1.1"))
+        assertTrue(m("https://facebook.com", "www.facebook.com") && m("https://facebook.com", "m.facebook.com"))
         assertEquals("tiki.vn", DomainMatcher.baseDomain("shop.tiki.vn"))
         assertEquals("tiki.com.vn", DomainMatcher.baseDomain("a.b.tiki.com.vn"))
         assertTrue(DomainMatcher.hostOf("https://pаypal.com/")!!.startsWith("xn--"))   // punycode, không bao giờ trùng paypal.com
@@ -82,7 +97,19 @@ class AutofillCoreTest {
             FormField(1, texts = listOf("Mật khẩu")),
             FormField(2, texts = listOf("Nhập lại mật khẩu")),
         ))
-        assertEquals(0, register.username); assertEquals(listOf(1, 2), register.passwords)
+        assertEquals(0, register.username); assertEquals(listOf(1), register.passwords); assertEquals(listOf(2), register.newPasswords)
+
+        // Form đổi mật khẩu: điền mật khẩu hiện tại, KHÔNG điền vào ô mật khẩu mới
+        val change = FormClassifier.classify(listOf(
+            FormField(0, hints = listOf("current-password")),
+            FormField(1, hints = listOf("new-password")),
+            FormField(2, htmlType = "password", htmlAttrs = listOf("confirm_password")),
+        ))
+        assertEquals(listOf(0), change.passwords); assertEquals(listOf(1, 2), change.newPasswords)
+
+        // Ô PIN số (NUMBER_PASSWORD) không bị coi là mật khẩu nếu tên ô không nói vậy
+        assertTrue(FormClassifier.classify(listOf(FormField(0, inputType = 0x00000012))).isEmpty)
+        assertEquals(listOf(0), FormClassifier.classify(listOf(FormField(0, inputType = 0x00000012, texts = listOf("Mật khẩu")))).passwords)
 
         assertTrue(FormClassifier.classify(listOf(FormField(0, htmlType = "search"))).isEmpty)
         assertNull(FormClassifier.classify(listOf(FormField(0, hints = listOf("password")))).username)
@@ -103,6 +130,10 @@ class AutofillCoreTest {
 
         assertEquals(listOf(gh), AutofillMatcher.matching(all, AutofillTarget.Web("github.com", "https", "com.android.chrome")))
         assertEquals(listOf(bank), AutofillMatcher.matching(all, AutofillTarget.App("com.VCB", "aa11")))
+        // App đã xoay vòng khóa ký: chứng chỉ cũ nằm trong lịch sử => vẫn khớp liên kết cũ
+        assertEquals(listOf(bank), AutofillMatcher.matching(all, AutofillTarget.App("com.VCB", "cc33", setOf("aa11", "cc33"))))
+        // Trình duyệt chưa xác nhận: không tự khớp gì, dù tên miền đúng
+        assertTrue(AutofillMatcher.matching(all, AutofillTarget.UnverifiedBrowser("github.com", "https", "org.bromite.bromite", "x", false, false)).isEmpty())
         assertTrue(AutofillMatcher.matching(all, AutofillTarget.App("com.VCB", "BB22")).isEmpty())   // chứng chỉ khác: app giả
         assertTrue(AutofillMatcher.matching(all, AutofillTarget.App("com.VCB", null)).isEmpty())
         assertTrue(AutofillMatcher.matching(all, AutofillTarget.App("com.github.android", "x")).isEmpty()) // chưa liên kết
@@ -113,7 +144,7 @@ class AutofillCoreTest {
         assertFalse(AutofillMatcher.suggestedForApp(gh, "com.google.android.youtube"))
 
         // Yêu thích lên đầu
-        val a = login("A", "https://a.example.com"); val b = login("B", "https://b.example.com", fav = true)
+        val a = login("A", "https://example.com/a"); val b = login("B", "https://example.com/b", fav = true)
         assertEquals(listOf(b, a), AutofillMatcher.matching(listOf(a, b), AutofillTarget.Web("example.com", "https", "org.mozilla.firefox")))
 
         assertTrue(TrustedBrowsers.isTrusted("com.android.chrome"))

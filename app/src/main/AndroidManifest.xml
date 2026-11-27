@@ -13,6 +13,13 @@
 
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
+    <!-- Ẩn cửa sổ nổi của app khác trên màn hình của app (chống lừa bấm / tapjacking). Quyền thường, không hỏi. -->
+    <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS" />
+
+    <!-- Tự động điền: đọc chứng chỉ ký + tên của app đang xin điền, để chỉ điền đúng app thật (không app giả cùng
+         tên gói). Không cho app đọc dữ liệu của app khác. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
+
     <application
         android:name=".MatKhauApp"
         android:allowBackup="false"
@@ -46,6 +53,27 @@
             android:noHistory="true"
             android:taskAffinity=""
             android:theme="@android:style/Theme.NoDisplay" />
+
+        <!-- Dịch vụ tự động điền. Chỉ hệ thống bind được (BIND_AUTOFILL_SERVICE). -->
+        <service
+            android:name=".autofill.MatKhauAutofillService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_AUTOFILL_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.autofill.AutofillService" />
+            </intent-filter>
+            <meta-data android:name="android.autofill" android:resource="@xml/autofill_service" />
+        </service>
+
+        <!-- Mở khóa / chọn mục / lưu cho tự động điền. Không exported: chỉ mở qua PendingIntent của chính app. -->
+        <activity
+            android:name=".autofill.AutofillActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|touchscreen|uiMode|density|fontScale|fontWeightAdjustment|locale|layoutDirection|mcc|mnc|colorMode|grammaticalGender"
+            android:windowSoftInputMode="adjustResize" />
 
         <!-- Ô "Khóa Mật Khẩu" trong Cài đặt nhanh. Chỉ hệ thống bind được (BIND_QUICK_SETTINGS_TILE). -->
         <service

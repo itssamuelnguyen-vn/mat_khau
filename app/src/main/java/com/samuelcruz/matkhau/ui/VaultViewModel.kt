@@ -87,6 +87,12 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             if (value != null) messageQueue.trySend(value)
         }
 
+    /**
+     * true khi ViewModel thuộc màn hình tự động điền: mở khóa ở đó không chạy các bước bắt buộc của app chính
+     * (đặt mật khẩu mới, hiện Recovery Key mới) vì màn hình đó không hiển thị chúng; app chính làm khi mở lần sau.
+     */
+    var hostIsAutofill = false
+
     /** Khóa bằng tay ("Khóa ngay") thì không tự bật hộp thoại vân tay ngay sau đó. */
     var skipNextBiometricPrompt by mutableStateOf(false)
 
@@ -268,6 +274,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         if (corrupted > 0) {
             snackbar = "Cảnh báo: $corrupted mục bị hỏng hoặc bị sửa đổi nên không được mở."
         }
+        if (hostIsAutofill) return
         if (settings.mustChangePassword) {
             // Đã mở bằng Recovery Key mà chưa đặt mật khẩu mới: bắt buộc, dù lần này mở bằng cách nào.
             stack = listOf(Screen.VaultList, Screen.ChangePassword(forced = true))
@@ -276,6 +283,26 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             val key = repository.regenerateRecoveryKey()
             if (repository.isUnlocked()) {
                 stack = listOf(Screen.VaultList, Screen.ShowRecoveryKey(key, firstTime = false, replacedUnconfirmed = true))
+            }
+        }
+    }
+
+    /**
+     * App chính hiện nội dung đã mở khóa mà KHÔNG qua afterUnlock của nó (vault được mở từ màn hình tự động điền,
+     * hoặc Activity được tạo lại): vẫn chạy các bước bắt buộc còn dang dở.
+     */
+    fun ensureForcedFlows() {
+        if (hostIsAutofill || busyText != null || !repository.isUnlocked()) return
+        if (settings.mustChangePassword) {
+            if (stack.none { it is Screen.ChangePassword && it.forced }) stack = listOf(Screen.VaultList, Screen.ChangePassword(forced = true))
+            return
+        }
+        if (settings.recoveryKeyPending && stack.none { it is Screen.ShowRecoveryKey }) {
+            runBusy("Đang tạo Recovery Key mới…") {
+                val key = repository.regenerateRecoveryKey()
+                if (repository.isUnlocked()) {
+                    stack = listOf(Screen.VaultList, Screen.ShowRecoveryKey(key, firstTime = false, replacedUnconfirmed = true))
+                }
             }
         }
     }
@@ -336,6 +363,13 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         // Tuổi của mật khẩu dùng lại: tính từ lúc nó bị thay (không coi là "mới đặt"), để Sức khỏe vẫn báo cũ.
         repository.save(e.withPassword(old.password, now, setAt = old.changedAt).copy(updatedAt = now))
         snackbar = "Đã khôi phục mật khẩu cũ. Nhớ đổi lại trên website nếu cần."
+    }
+
+    /** Bỏ liên kết tự động điền giữa mục và một ứng dụng. */
+    fun unlinkApp(id: String, packageName: String) = runBusy(null) {
+        val e = entry(id) ?: return@runBusy
+        repository.save(e.copy(linkedApps = e.linkedApps.filterNot { it.packageName == packageName }))
+        snackbar = "Đã bỏ liên kết"
     }
 
     fun deleteEntry(id: String) = runBusy(null) {
