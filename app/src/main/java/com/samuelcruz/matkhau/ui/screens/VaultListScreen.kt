@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -56,6 +57,7 @@ import com.samuelcruz.matkhau.ui.components.TrackedTextField
 
 private const val FILTER_ALL = "__all"
 private const val FILTER_NOTES = "__notes"
+private const val FILTER_FAVORITES = "__favorites"
 
 @Composable
 fun VaultListScreen(vm: VaultViewModel) {
@@ -64,14 +66,17 @@ fun VaultListScreen(vm: VaultViewModel) {
     var filter by remember { mutableStateOf(FILTER_ALL) }
     var addMenu by remember { mutableStateOf(false) }
 
+    // Bỏ ghim mục yêu thích cuối cùng khi đang lọc "Yêu thích": quay về "Tất cả" (chip đã biến mất).
+    if (filter == FILTER_FAVORITES && entries.none { it.favorite }) filter = FILTER_ALL
     val visible = entries.filter { e ->
         val passesFilter = when (filter) {
             FILTER_ALL -> true
             FILTER_NOTES -> e.type == EntryType.NOTE
+            FILTER_FAVORITES -> e.favorite
             else -> e.category == filter
         }
         passesFilter && e.matches(query)
-    }
+    }.sortedByDescending { it.favorite }   // yêu thích lên đầu (sắp xếp ổn định: vẫn theo tên trong từng nhóm)
 
     AppScaffold(
         title = "Mật Khẩu",
@@ -119,6 +124,9 @@ fun VaultListScreen(vm: VaultViewModel) {
                 .padding(horizontal = 16.dp),
         ) {
             FilterChip(selected = filter == FILTER_ALL, onClick = { filter = FILTER_ALL }, label = { Text("Tất cả (${entries.size})") })
+            if (entries.any { it.favorite }) {
+                FilterChip(selected = filter == FILTER_FAVORITES, onClick = { filter = FILTER_FAVORITES }, label = { Text("★ Yêu thích") })
+            }
             FilterChip(selected = filter == FILTER_NOTES, onClick = { filter = FILTER_NOTES }, label = { Text("Ghi chú") })
             Categories.all.forEach { c ->
                 FilterChip(selected = filter == c, onClick = { filter = c }, label = { Text(Categories.label(c)) })
@@ -183,6 +191,13 @@ private fun EntryRow(entry: Entry, onClick: () -> Unit) {
                 }
             }
         },
-        trailingContent = { if (entry.totp.isNotBlank()) Text("2FA", style = MaterialTheme.typography.labelSmall) },
+        trailingContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (entry.totp.isNotBlank()) Text("2FA ", style = MaterialTheme.typography.labelSmall)
+                if (entry.favorite) {
+                    Icon(Icons.Filled.Star, contentDescription = "Yêu thích", tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+        },
     )
 }

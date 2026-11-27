@@ -78,6 +78,7 @@ fun SettingsScreen(vm: VaultViewModel) {
         SectionTitle("Khóa")
         SettingRow("Tự khóa sau", AppSettings.autoLockLabel(vm.autoLockMillis)) { autoLockDialog = true }
         SettingRow("Khóa ngay", "Xóa khóa giải mã khỏi bộ nhớ") { vm.lock() }
+        Hint("Khóa khẩn cấp từ bất kỳ đâu: kéo thanh thông báo xuống → Sửa (✏) → thêm ô \"Khóa Mật Khẩu\" vào Cài đặt nhanh, hoặc giữ biểu tượng app → \"Khóa ngay\".")
 
         val bioSupported = vm.canUseBiometrics()
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -114,6 +115,7 @@ fun SettingsScreen(vm: VaultViewModel) {
         Hint("Backup mở được bằng mật khẩu chính (hoặc Recovery Key) TẠI THỜI ĐIỂM xuất file. Hãy xuất backup định kỳ.")
 
         SectionTitle("Thông tin")
+        SettingRow("Sức khỏe mật khẩu", "Mật khẩu yếu, dùng chung, lâu chưa đổi, thiếu 2FA") { vm.navigate(Screen.Health) }
         SettingRow("Bảo mật & quyền riêng tư", "Kiểm tra trạng thái bảo mật của app") { vm.navigate(Screen.Security) }
     }
 

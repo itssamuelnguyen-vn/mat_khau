@@ -20,6 +20,7 @@ import com.samuelcruz.matkhau.core.vault.WrongSecretException
 import com.samuelcruz.matkhau.data.RestoredBackup
 import com.samuelcruz.matkhau.model.Entry
 import com.samuelcruz.matkhau.model.EntryType
+import com.samuelcruz.matkhau.model.PasswordHistoryItem
 import com.samuelcruz.matkhau.security.BiometricKeyManager
 import com.samuelcruz.matkhau.security.BiometricPrompter
 import com.samuelcruz.matkhau.security.SecureClipboard
@@ -43,6 +44,7 @@ sealed interface Screen {
     data object Generator : Screen
     data object Settings : Screen
     data object Security : Screen
+    data object Health : Screen
     data class ChangePassword(val forced: Boolean) : Screen
     /** [replacedUnconfirmed]: key cũ chưa được xác nhận đã chép nên app vừa tạo key mới thay thế. */
     data class ShowRecoveryKey(val key: String, val firstTime: Boolean, val replacedUnconfirmed: Boolean = false) : Screen
@@ -276,10 +278,23 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveEntry(draft: Entry, isNew: Boolean) = runBusy(null) {
         val now = System.currentTimeMillis()
-        val entry = if (isNew) {
-            draft.copy(id = UUID.randomUUID().toString(), createdAt = now, updatedAt = now)
-        } else {
-            draft.copy(updatedAt = now)
+        val existing = if (isNew) null else entry(draft.id)
+        val entry = when {
+            isNew -> draft.copy(
+                id = UUID.randomUUID().toString(), createdAt = now, updatedAt = now,
+                passwordUpdatedAt = if (draft.password.isNotEmpty()) now else 0L,
+            )
+            // Form không biết các trường yêu thích / lịch sử: lấy từ bản đang lưu, rồi đổi mật khẩu qua
+            // withPassword để mật khẩu cũ vào lịch sử (spec 3.2).
+            existing != null -> draft.copy(
+                password = existing.password,
+                createdAt = existing.createdAt,
+                updatedAt = now,
+                favorite = existing.favorite,
+                passwordUpdatedAt = existing.passwordUpdatedAt,
+                passwordHistory = existing.passwordHistory,
+            ).withPassword(draft.password, now)
+            else -> draft.copy(updatedAt = now)
         }
         repository.save(entry)
         if (!repository.isUnlocked()) return@runBusy
@@ -288,6 +303,22 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         stack = (stack.filterNot { it === edit } + if (isNew && edit != null) listOf(Screen.Detail(entry.id)) else emptyList())
             .ifEmpty { listOf(Screen.VaultList) }
         snackbar = "Đã lưu"
+    }
+
+    /** Ghim / bỏ ghim mục lên đầu danh sách (spec 3.3). Không đổi ngày sửa. */
+    fun toggleFavorite(id: String) = runBusy(null) {
+        val e = entry(id) ?: return@runBusy
+        repository.save(e.copy(favorite = !e.favorite))
+        snackbar = if (e.favorite) "Đã bỏ khỏi Yêu thích" else "Đã thêm vào Yêu thích"
+    }
+
+    /** Dùng lại một mật khẩu cũ; mật khẩu hiện tại vào lịch sử. */
+    fun restorePassword(id: String, old: PasswordHistoryItem) = runBusy(null) {
+        val e = entry(id) ?: return@runBusy
+        val now = System.currentTimeMillis()
+        // Tuổi của mật khẩu dùng lại: tính từ lúc nó bị thay (không coi là "mới đặt"), để Sức khỏe vẫn báo cũ.
+        repository.save(e.withPassword(old.password, now, setAt = old.changedAt).copy(updatedAt = now))
+        snackbar = "Đã khôi phục mật khẩu cũ. Nhớ đổi lại trên website nếu cần."
     }
 
     fun deleteEntry(id: String) = runBusy(null) {

@@ -5,7 +5,9 @@ Mọi dữ liệu được mã hóa ngay trên điện thoại bằng mật kh�
 
 - Tài khoản đăng nhập (username, mật khẩu, URL, mã 2FA/TOTP, ghi chú, tag, trường tùy chỉnh) và ghi chú bảo mật
 - Mã 2FA tự cập nhật, có đếm ngược; thêm bằng **quét mã QR** hoặc dán secret / `otpauth://`
-- Tìm kiếm, lọc theo phân loại, sinh mật khẩu / cụm từ (passphrase)
+- Tìm kiếm, lọc theo phân loại, **yêu thích** (ghim lên đầu), sinh mật khẩu / cụm từ (passphrase)
+- **Lịch sử mật khẩu** (dùng lại bản cũ), **sức khỏe mật khẩu**: yếu, dùng chung, lâu chưa đổi, thiếu 2FA
+- **Khóa khẩn cấp**: ô "Khóa Mật Khẩu" trong Cài đặt nhanh, hoặc giữ biểu tượng app → "Khóa ngay"
 - Mở bằng vân tay / khuôn mặt (Android Keystore), Recovery Key khi quên mật khẩu chính
 - Tự khóa, tự xóa clipboard, chặn chụp màn hình, màn hình kiểm tra bảo mật
 - Backup mã hóa (`.lvbackup`) mở được bằng mật khẩu chính hoặc Recovery Key, khôi phục được trên máy khác

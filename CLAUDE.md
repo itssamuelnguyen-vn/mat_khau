@@ -33,16 +33,21 @@ compile/target SDK 37, minSdk 28 (Android 9). `MainActivity` is a `FragmentActiv
 ```
 MatKhauApp    wiring: repository (+ load() off the main thread), settings, autoLock, biometric; screen off → lock
 MainActivity  FLAG_SECURE (+ no recents screenshot on 13+), user interaction → auto-lock timer
+LockActivity  no-UI panic lock behind the launcher shortcut "Khóa ngay" (res/xml/shortcuts.xml)
 core/         pure Kotlin, no Android, JVM-tested
   crypto/     Aead (AES-256-GCM, random 12-byte nonce), Argon2id (Bouncy Castle) + KdfParams limits, Bytes
   format/     Base32 (RFC 4648), ByteWriter / ByteReader (bounds-checked big-endian)
   vault/      VaultHeader (key slots), VaultCrypto (key hierarchy), BackupFormat (.lvbackup), RecoveryKey
   totp/       Totp (RFC 6238, otpauth:// parsing)
-  generator/  PasswordGenerator (SecureRandom, BIP39 passphrases), StrengthEstimator (rough)
+  generator/  PasswordGenerator (SecureRandom, BIP39 passphrases), StrengthEstimator (zxcvbn-like: common /
+              leet passwords, keyboard runs, sequences, repeats, years, dates → bits + Vietnamese warnings)
+  health/     PasswordHealth (weak, reused, older than 1 year, missing 2FA / URL, score)
   qr/         QrDecoder (ZXing on a luminance frame)
 data/         VaultDatabase (SQLiteOpenHelper: meta + items), VaultRepository (session, CRUD, backup; Dispatchers.IO)
-model/        Entry (serialized to JSON then encrypted as a whole), BackupPayload, Categories
+model/        Entry (serialized to JSON then encrypted as a whole; favorite, passwordUpdatedAt, passwordHistory
+              ≤ 20 via withPassword), BackupPayload, Categories. New fields need defaults (old items / backups)
 security/     AutoLockManager, BiometricKeyManager (Keystore key) + BiometricPrompter, SecureClipboard,
+              PanicLockTileService (Quick Settings tile "Khóa Mật Khẩu"),
               SecurityAudit (real runtime checks), AppSettings (non-sensitive prefs only)
 ui/           VaultViewModel (screen stack + all actions), AppRoot (router), screens/, components/, theme/
 ```
@@ -115,6 +120,9 @@ effort (process killed = timer lost, keyboards may keep a history); no protectio
 malware; the strength meter is rough; the clipboard "is it still ours" check relies on the clip label, which a
 keyboard / OEM clipboard manager could change.
 
-## Next (Phase 2 of the spec)
+## Next
 
-Autofill, password history, favourites, weak / reused password detection, health dashboard.
+Done from Phase 2 / 3: password history, favourites, password health, panic lock (tile + shortcut). Left, by
+the owner's choice after testing 0.2.0 on the phone: Autofill + phishing protection, CSV import (Bitwarden /
+KeePass / Chrome). Not planned: decoy vault, hardware FIDO2 keys (no platform API), passkeys / multiple vaults
+unless asked.

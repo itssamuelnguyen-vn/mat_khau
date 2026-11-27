@@ -10,7 +10,18 @@ data class CustomField(
     val name: String,
     val value: String,
     val hidden: Boolean = true,
-)
+) {
+    override fun toString(): String = "CustomField(name=$name)"   // không in giá trị
+}
+
+/** Một mật khẩu cũ: [changedAt] = lúc nó bị thay bằng mật khẩu khác (spec 3.2). Mã hóa cùng mục. */
+@Serializable
+data class PasswordHistoryItem(
+    val password: String,
+    val changedAt: Long,
+) {
+    override fun toString(): String = "PasswordHistoryItem(changedAt=$changedAt)"
+}
 
 /**
  * Một mục trong vault. TOÀN BỘ đối tượng này (kể cả tiêu đề, URL, tag, ngày tạo)
@@ -32,9 +43,37 @@ data class Entry(
     val customFields: List<CustomField> = emptyList(),
     val createdAt: Long,
     val updatedAt: Long,
+    // Thêm ở 0.2.0. Có giá trị mặc định nên mục / backup cũ vẫn đọc được.
+    val favorite: Boolean = false,
+    /** Lúc đặt mật khẩu hiện tại; 0 = không rõ (mục cũ) => dùng [createdAt]. */
+    val passwordUpdatedAt: Long = 0L,
+    /** Mật khẩu cũ, mới nhất trước, tối đa [MAX_HISTORY]. */
+    val passwordHistory: List<PasswordHistoryItem> = emptyList(),
 ) {
     /** data class tự sinh toString() in cả mật khẩu/TOTP/ghi chú: ghi đè để không bao giờ lộ qua log hay lỗi. */
     override fun toString(): String = "Entry(id=$id, type=$type)"
+
+    /**
+     * Mật khẩu hiện tại được đặt từ lúc nào (để phát hiện mật khẩu lâu chưa đổi). Mục từ 0.1.x chưa có
+     * [passwordUpdatedAt]: dùng [updatedAt] (lần sửa cuối luôn mới hơn hoặc bằng lần đổi mật khẩu cuối),
+     * để không báo nhầm "lâu chưa đổi". 0 = không rõ.
+     */
+    fun passwordSince(): Long = if (passwordUpdatedAt > 0) passwordUpdatedAt else updatedAt
+
+    /**
+     * Đổi sang [newPassword]: mật khẩu hiện tại (nếu có) vào đầu lịch sử. Mật khẩu mới trùng một bản trong
+     * lịch sử (khôi phục bản cũ) thì bản đó được bỏ khỏi lịch sử. Không đổi gì nếu mật khẩu giống hệt.
+     */
+    fun withPassword(newPassword: String, now: Long, setAt: Long = now): Entry {
+        if (newPassword == password) return this
+        val older = passwordHistory.filterNot { it.password == newPassword }
+        val history = if (password.isEmpty()) older else listOf(PasswordHistoryItem(password, now)) + older
+        return copy(password = newPassword, passwordUpdatedAt = setAt, passwordHistory = history.take(MAX_HISTORY))
+    }
+
+    companion object {
+        const val MAX_HISTORY = 20
+    }
 
     /** Tìm kiếm trong RAM sau khi mở khóa. Không tìm theo mật khẩu/TOTP/ghi chú (spec 2.11). */
     fun matches(query: String): Boolean {

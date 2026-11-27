@@ -329,7 +329,9 @@ class VaultRepository(context: Context) {
                 if (ids.any { it.isBlank() } || ids.toSet().size != ids.size) {
                     throw FormatException("Backup có mục trùng hoặc thiếu mã định danh")
                 }
-                RestoredBackup(parsed.header, key, payload.entries, payload.exportedAt)
+                // File backup có thể do bản khác tạo: giới hạn lịch sử mật khẩu như khi app tự ghi.
+                val entries = payload.entries.map { it.copy(passwordHistory = it.passwordHistory.take(Entry.MAX_HISTORY)) }
+                RestoredBackup(parsed.header, key, entries, payload.exportedAt)
             } catch (e: Throwable) {
                 Bytes.wipe(key)
                 throw e

@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Mật Khẩu</string>
+    <string name="tile_lock">Khóa Mật Khẩu</string>
+    <string name="shortcut_lock_short">Khóa ngay</string>
+    <string name="shortcut_lock_long">Khóa Mật Khẩu ngay</string>
 </resources>

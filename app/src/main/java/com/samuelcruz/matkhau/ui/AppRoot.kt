@@ -31,6 +31,7 @@ import com.samuelcruz.matkhau.ui.screens.CreateVaultScreen
 import com.samuelcruz.matkhau.ui.screens.EntryDetailScreen
 import com.samuelcruz.matkhau.ui.screens.EntryEditScreen
 import com.samuelcruz.matkhau.ui.screens.GeneratorScreen
+import com.samuelcruz.matkhau.ui.screens.HealthScreen
 import com.samuelcruz.matkhau.ui.screens.RecoveryUnlockScreen
 import com.samuelcruz.matkhau.ui.screens.RestoreScreen
 import com.samuelcruz.matkhau.ui.screens.SecurityScreen
@@ -66,6 +67,7 @@ fun AppRoot(vm: VaultViewModel) {
                 Screen.Generator -> GeneratorScreen(vm)
                 Screen.Settings -> SettingsScreen(vm)
                 Screen.Security -> SecurityScreen(vm)
+                Screen.Health -> HealthScreen(vm)
                 is Screen.ChangePassword -> ChangePasswordScreen(vm, screen.forced)
                 is Screen.ShowRecoveryKey -> ShowRecoveryKeyScreen(vm, screen.key, screen.firstTime, screen.replacedUnconfirmed)
                 Screen.Restore -> RestoreScreen(vm)

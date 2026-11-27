@@ -11,6 +11,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
@@ -25,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,7 +41,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.samuelcruz.matkhau.core.totp.Totp
 import com.samuelcruz.matkhau.core.totp.TotpConfig
+import com.samuelcruz.matkhau.core.generator.Strength
+import com.samuelcruz.matkhau.core.generator.StrengthEstimator
+import com.samuelcruz.matkhau.core.health.PasswordHealth
 import com.samuelcruz.matkhau.model.Categories
+import com.samuelcruz.matkhau.model.Entry
+import com.samuelcruz.matkhau.model.PasswordHistoryItem
+import com.samuelcruz.matkhau.ui.components.Hint
 import com.samuelcruz.matkhau.model.EntryType
 import com.samuelcruz.matkhau.ui.Screen
 import com.samuelcruz.matkhau.ui.VaultViewModel
@@ -57,6 +66,7 @@ fun EntryDetailScreen(vm: VaultViewModel, id: String) {
     val entry = entries.firstOrNull { it.id == id }
     val context = LocalContext.current.applicationContext
     var confirmDelete by remember { mutableStateOf(false) }
+    var restoreCandidate by remember { mutableStateOf<PasswordHistoryItem?>(null) }
 
     if (entry == null) {
         AppScaffold(title = "Không tìm thấy", onBack = { vm.back() }) { Text("Mục này không còn tồn tại.") }
@@ -67,6 +77,12 @@ fun EntryDetailScreen(vm: VaultViewModel, id: String) {
         title = entry.title,
         onBack = { vm.back() },
         actions = {
+            IconButton(onClick = { vm.toggleFavorite(entry.id) }) {
+                Icon(
+                    if (entry.favorite) Icons.Filled.Star else Icons.Outlined.StarOutline,
+                    if (entry.favorite) "Bỏ yêu thích" else "Thêm vào yêu thích",
+                )
+            }
             IconButton(onClick = { vm.navigate(Screen.Edit(entry.id, entry.type)) }) { Icon(Icons.Filled.Edit, "Sửa") }
             IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Filled.Delete, "Xóa") }
         },
@@ -78,7 +94,11 @@ fun EntryDetailScreen(vm: VaultViewModel, id: String) {
 
         if (entry.type == EntryType.LOGIN) {
             FieldRow("Username", entry.username, onCopy = { vm.copy(context, "username", entry.username) })
-            FieldRow("Mật khẩu", entry.password, secret = true, onCopy = { vm.copy(context, "mật khẩu", entry.password) })
+            // key: đổi mật khẩu (vd. dùng lại bản cũ) thì dòng này về trạng thái đang che
+            key(entry.password) {
+                FieldRow("Mật khẩu", entry.password, secret = true, onCopy = { vm.copy(context, "mật khẩu", entry.password) })
+            }
+            PasswordHealthHint(entry, entries)
             FieldRow("URL", entry.url, onCopy = { vm.copy(context, "URL", entry.url) })
             if (entry.totp.isNotBlank()) TotpCard(entry.totp) { code -> vm.copy(context, "mã 2FA", code) }
         }
@@ -95,10 +115,46 @@ fun EntryDetailScreen(vm: VaultViewModel, id: String) {
             }
         }
 
+        if (entry.type == EntryType.LOGIN && entry.passwordHistory.isNotEmpty()) {
+            var showHistory by remember { mutableStateOf(false) }
+            TextButton(onClick = { showHistory = !showHistory }) {
+                Text((if (showHistory) "▾ " else "▸ ") + "Lịch sử mật khẩu (${entry.passwordHistory.size})")
+            }
+            if (showHistory) {
+                val dateFmt = DateFormat.getDateInstance(DateFormat.MEDIUM)
+                entry.passwordHistory.forEach { item ->
+                    // key theo từng bản: trạng thái "đang hiện" không nhảy sang dòng khác khi danh sách đổi
+                    key(item.changedAt, item.password) {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                            FieldRow(
+                                "Dùng tới ${dateFmt.format(Date(item.changedAt))}", item.password, secret = true,
+                                onCopy = { vm.copy(context, "mật khẩu cũ", item.password) },
+                            )
+                            TextButton(onClick = { restoreCandidate = item }) { Text("Dùng lại mật khẩu này") }
+                        }
+                    }
+                    }
+                }
+            }
+        }
+
         HorizontalDivider()
         val fmt = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
         Text("Tạo: ${fmt.format(Date(entry.createdAt))}", style = MaterialTheme.typography.bodySmall)
         Text("Sửa: ${fmt.format(Date(entry.updatedAt))}", style = MaterialTheme.typography.bodySmall)
+    }
+
+    restoreCandidate?.let { old ->
+        AlertDialog(
+            onDismissRequest = { restoreCandidate = null },
+            title = { Text("Dùng lại mật khẩu cũ?") },
+            text = { Text("Mật khẩu hiện tại sẽ được chuyển vào lịch sử. App không đổi mật khẩu trên website: hãy chắc là website đang dùng mật khẩu cũ này.") },
+            confirmButton = {
+                TextButton(onClick = { restoreCandidate = null; vm.restorePassword(entry.id, old) }) { Text("Dùng lại") }
+            },
+            dismissButton = { TextButton(onClick = { restoreCandidate = null }) { Text("Hủy") } },
+        )
     }
 
     if (confirmDelete) {
@@ -111,6 +167,25 @@ fun EntryDetailScreen(vm: VaultViewModel, id: String) {
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Hủy") } },
         )
+    }
+}
+
+/** Độ mạnh + cảnh báo của mật khẩu hiện tại: yếu, dùng chung với mục khác, lâu chưa đổi. */
+@Composable
+private fun PasswordHealthHint(entry: Entry, entries: List<Entry>) {
+    if (entry.password.isEmpty()) return
+    val result = remember(entry.password) { StrengthEstimator.analyze(entry.password) }
+    val reused = remember(entry, entries) { PasswordHealth.reuseCount(entry, entries) }
+    val ageDays = (System.currentTimeMillis() - entry.passwordSince()) / (24L * 60 * 60 * 1000)
+    val problems = buildList {
+        if (result.strength <= Strength.WEAK) add("Mật khẩu ${result.strength.label.lowercase()}: ${result.warnings.firstOrNull() ?: "dễ đoán"}")
+        if (reused > 0) add("Dùng chung với $reused mục khác")
+        if (entry.passwordSince() > 0 && ageDays * 24L * 60 * 60 * 1000 > PasswordHealth.OLD_AFTER_MS) add("Chưa đổi $ageDays ngày")
+    }
+    if (problems.isEmpty()) {
+        Hint("Độ mạnh: ${result.strength.label}")
+    } else {
+        problems.forEach { ErrorText("⚠ $it") }
     }
 }
 

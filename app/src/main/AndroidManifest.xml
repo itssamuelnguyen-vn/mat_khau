@@ -33,6 +33,30 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Giữ biểu tượng app → "Khóa ngay" -->
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
+
+        <!-- Khóa khẩn cấp từ shortcut: không giao diện, khóa rồi đóng. Exported để launcher mở được;
+             app khác gọi vào cũng chỉ làm vault khóa lại. -->
+        <activity
+            android:name=".LockActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay" />
+
+        <!-- Ô "Khóa Mật Khẩu" trong Cài đặt nhanh. Chỉ hệ thống bind được (BIND_QUICK_SETTINGS_TILE). -->
+        <service
+            android:name=".security.PanicLockTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_lock_small"
+            android:label="@string/tile_lock"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

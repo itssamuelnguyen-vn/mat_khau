@@ -182,8 +182,9 @@ fun SecretField(
 @Composable
 fun StrengthMeter(password: String) {
     if (password.isEmpty()) return
-    val strength = StrengthEstimator.estimate(password)
-    val bits = StrengthEstimator.estimateBits(password).toInt()
+    val result = remember(password) { StrengthEstimator.analyze(password) }
+    val strength = result.strength
+    val bits = result.bits.toInt()
     val color = when (strength) {
         Strength.VERY_WEAK, Strength.WEAK -> Color(0xFFD32F2F)
         Strength.FAIR -> Color(0xFFF9A825)
@@ -196,6 +197,10 @@ fun StrengthMeter(password: String) {
             modifier = Modifier.fillMaxWidth(),
         )
         Text("Độ mạnh: ${strength.label} (~$bits bit, ước lượng)", style = MaterialTheme.typography.bodySmall, color = color)
+        // Lý do cụ thể (mật khẩu phổ biến, ngày sinh, chuỗi phím...) khi chưa đủ mạnh
+        if (strength <= Strength.FAIR) {
+            result.warnings.take(2).forEach { Text("• $it", style = MaterialTheme.typography.bodySmall, color = color) }
+        }
     }
 }
 
