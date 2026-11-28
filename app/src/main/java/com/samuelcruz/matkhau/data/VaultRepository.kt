@@ -13,8 +13,12 @@ import com.samuelcruz.matkhau.core.vault.UnlockPolicy
 import com.samuelcruz.matkhau.core.vault.VaultCrypto
 import com.samuelcruz.matkhau.core.vault.VaultHeader
 import com.samuelcruz.matkhau.core.vault.WrongSecretException
+import com.samuelcruz.matkhau.core.vault.Attachments
+import com.samuelcruz.matkhau.model.AttachmentRef
 import com.samuelcruz.matkhau.model.BackupPayload
 import com.samuelcruz.matkhau.model.Entry
+import java.io.OutputStream
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,13 +31,20 @@ import kotlinx.serialization.json.Json
 
 class VaultLockedException : Exception("Vault đang khóa")
 
+/** Vượt giới hạn file đính kèm (thông báo đọc được cho người dùng). */
+class AttachmentLimitException(message: String) : Exception(message)
+
 /** Backup đã giải mã thành công, đang chờ người dùng xác nhận ghi đè. */
 class RestoredBackup internal constructor(
     internal val header: VaultHeader,
     internal val vek: ByteArray,
     val entries: List<Entry>,
     val exportedAt: Long,
+    /** File backup đã đọc: các đoạn file đính kèm được chép y nguyên vào DB lúc khôi phục. */
+    internal val parsed: BackupFormat.Parsed,
 ) {
+    val attachmentCount: Int get() = entries.sumOf { it.attachments.size }
+
     fun discard() = Bytes.wipe(vek)
 }
 
@@ -75,6 +86,18 @@ class VaultRepository(context: Context) {
     private val _lockCount = MutableStateFlow(0L)
     val lockCount: StateFlow<Long> = _lockCount.asStateFlow()
 
+    /**
+     * Gọi sau mỗi thay đổi đã ghi xuống DB (số mục bị đổi): để đếm thay đổi chưa backup và hẹn tự backup.
+     * Chạy trên luồng IO.
+     */
+    @Volatile
+    var onVaultChanged: ((Int) -> Unit)? = null
+
+    /** Tăng sau mỗi lần khôi phục backup (để tự backup biết vault đã bị thay trong lúc nó đang ghi). */
+    @Volatile
+    var restoreCount: Long = 0
+        private set
+
     /** Số mục không giải mã được trong lần mở khóa gần nhất (bị hỏng / bị sửa). */
     @Volatile
     var corruptedItemCount: Int = 0
@@ -103,7 +126,7 @@ class VaultRepository(context: Context) {
                 Bytes.wipe(pw)
             }
             try {
-                db.replaceVault(mapOf(KEY_HEADER to created.header.encode()), emptyList())
+                db.replaceVault(mapOf(KEY_HEADER to created.header.encode()), emptySequence())
                 _initialized.value = true
                 val recoveryText = RecoveryKey.format(created.recoveryKey)
                 startSession(created.vek, created.header, emptyList(), corrupted = 0, gen = gen)
@@ -122,6 +145,7 @@ class VaultRepository(context: Context) {
         val gen = currentGeneration()
         val h = loadHeader()
         openSession(openPasswordSlot(h, password), h, gen, keyVerified = true)
+        cleanOrphanAttachments()
     }
 
     suspend fun unlockWithRecoveryKey(recoveryText: String) = withContext(Dispatchers.IO) {
@@ -138,6 +162,7 @@ class VaultRepository(context: Context) {
             Bytes.wipe(raw)
         }
         openSession(key, h, gen, keyVerified = true)
+        cleanOrphanAttachments()
     }
 
     /**
@@ -157,6 +182,7 @@ class VaultRepository(context: Context) {
             throw e
         }
         openSession(key, h, gen, keyVerified = false)
+        cleanOrphanAttachments()
     }
 
     /** Khóa ngay. Gọi được cả khi đang khóa: hủy luôn mọi lần mở khóa còn đang chạy Argon2id. */
@@ -188,9 +214,12 @@ class VaultRepository(context: Context) {
 
     // ---------------------------------------------------------------- CRUD
 
-    suspend fun save(entry: Entry) = withContext(Dispatchers.IO) {
+    suspend fun save(input: Entry) = withContext(Dispatchers.IO) {
         writeMutex.withLock {
             withSession { s ->
+                // File đính kèm chỉ đổi qua addAttachment / deleteAttachment: luôn lấy danh sách ĐANG LƯU, không tin bản
+                // người gọi đưa (có thể là bản chụp cũ của màn tự động điền / màn Sửa, làm mất hoặc "hồi sinh" file).
+                val entry = input.copy(attachments = s.entries.firstOrNull { it.id == input.id }?.attachments.orEmpty())
                 val plain = json.encodeToString(Entry.serializer(), entry).toByteArray(Charsets.UTF_8)
                 val box = try {
                     VaultCrypto.encryptItem(s.key, s.header.vaultId, entry.id, plain)
@@ -203,6 +232,7 @@ class VaultRepository(context: Context) {
                 }
             }
         }
+        onVaultChanged?.invoke(1)
     }
 
     /** Nhập nhiều mục (từ CSV) trong MỘT transaction; chỉ ghi nếu vault không bị khóa giữa chừng. */
@@ -211,6 +241,7 @@ class VaultRepository(context: Context) {
             withSession { s ->
                 val existingIds = _entries.value.map { it.id }.toSet()
                 require(list.none { it.id in existingIds } && list.map { it.id }.toSet().size == list.size) { "Trùng id" }
+                val list = list.map { if (it.attachments.isEmpty()) it else it.copy(attachments = emptyList()) }
                 val items = list.map { e ->
                     val plain = json.encodeToString(Entry.serializer(), e).toByteArray(Charsets.UTF_8)
                     try {
@@ -220,22 +251,127 @@ class VaultRepository(context: Context) {
                         Bytes.wipe(plain)
                     }
                 }
-                commit(s.generation) {
-                    db.insertItems(items)
+                commitTx(s.generation, write = { items.forEach { db.insertItem(it) } }) {
                     _entries.value = sorted(_entries.value + list)
                 }
             }
         }
+        onVaultChanged?.invoke(list.size)
     }
 
+    /** Xóa mục cùng mọi đoạn file đính kèm của nó, trong một transaction. */
     suspend fun delete(id: String) = withContext(Dispatchers.IO) {
         writeMutex.withLock {
             withSession { s ->
-                commit(s.generation) {
+                val rows = s.entries.firstOrNull { it.id == id }?.attachments.orEmpty().flatMap { rowIds(it) }
+                commitTx(s.generation, write = {
                     db.deleteItem(id)
-                    _entries.value = _entries.value.filterNot { it.id == id }
+                    db.deleteItems(rows)
+                }) { _entries.value = _entries.value.filterNot { it.id == id } }
+            }
+        }
+        onVaultChanged?.invoke(1)
+    }
+
+    // ---------------------------------------------------------------- file đính kèm
+
+    /**
+     * Thêm file vào mục: mã hóa thành các đoạn, ghi đoạn + mục đã cập nhật trong MỘT transaction.
+     * Ném [AttachmentLimitException] nếu vượt giới hạn.
+     */
+    suspend fun addAttachment(entryId: String, name: String, mimeType: String, data: ByteArray): AttachmentRef = withContext(Dispatchers.IO) {
+        val ref = writeMutex.withLock {
+            withSession { s ->
+                val entry = s.entries.firstOrNull { it.id == entryId } ?: throw VaultLockedException()
+                if (data.size > Attachments.MAX_FILE_SIZE) throw AttachmentLimitException("File lớn hơn ${Attachments.MAX_FILE_SIZE / (1024 * 1024)} MB")
+                if (entry.attachments.size >= Attachments.MAX_PER_ENTRY) throw AttachmentLimitException("Mỗi mục có tối đa ${Attachments.MAX_PER_ENTRY} file")
+                val total = s.entries.sumOf { e -> e.attachments.sumOf { it.size } }
+                if (total + data.size > Attachments.MAX_TOTAL_SIZE) {
+                    throw AttachmentLimitException("Tổng dung lượng file đính kèm tối đa ${Attachments.MAX_TOTAL_SIZE / (1024 * 1024)} MB (để backup không quá lớn)")
+                }
+                val id = UUID.randomUUID().toString()
+                val chunks = Attachments.seal(s.key, s.header.vaultId, id, data)
+                val now = System.currentTimeMillis()
+                val ref = AttachmentRef(
+                    id = id,
+                    name = name.take(200).ifBlank { "file" },
+                    mimeType = mimeType.take(100),
+                    size = data.size.toLong(),
+                    chunks = chunks.size,
+                    sha256 = Attachments.sha256Hex(data),
+                    addedAt = now,
+                )
+                val updated = entry.copy(attachments = entry.attachments + ref, updatedAt = now)
+                val item = encryptEntry(s, updated)
+                commitTx(s.generation, write = {
+                    chunks.forEach { db.insertItem(StoredItem(it.rowId, Attachments.ROW_FORMAT, it.box.nonce, it.box.ciphertext)) }
+                    db.upsertItem(item)
+                }) { _entries.value = sorted(_entries.value.filterNot { it.id == entryId } + updated) }
+                ref
+            }
+        }
+        onVaultChanged?.invoke(1)
+        ref
+    }
+
+    /** Giải mã một file (kiểm tra đủ đoạn + SHA-256). Người gọi nên wipe mảng khi xong. */
+    suspend fun readAttachment(entryId: String, attachmentId: String): ByteArray = withContext(Dispatchers.IO) {
+        withSession { s ->
+            val ref = s.entries.firstOrNull { it.id == entryId }?.attachments?.firstOrNull { it.id == attachmentId }
+                ?: throw VaultLockedException()
+            Attachments.open(s.key, s.header.vaultId, ref, ::loadChunk)
+        }
+    }
+
+    suspend fun deleteAttachment(entryId: String, attachmentId: String) = withContext(Dispatchers.IO) {
+        writeMutex.withLock {
+            withSession { s ->
+                val entry = s.entries.firstOrNull { it.id == entryId } ?: throw VaultLockedException()
+                val ref = entry.attachments.firstOrNull { it.id == attachmentId } ?: return@withSession
+                val updated = entry.copy(attachments = entry.attachments - ref, updatedAt = System.currentTimeMillis())
+                val item = encryptEntry(s, updated)
+                commitTx(s.generation, write = {
+                    db.upsertItem(item)
+                    db.deleteItems(rowIds(ref))
+                }) { _entries.value = sorted(_entries.value.filterNot { it.id == entryId } + updated) }
+            }
+        }
+        onVaultChanged?.invoke(1)
+    }
+
+    private fun rowIds(ref: AttachmentRef) = (0 until ref.chunks).map { Attachments.rowId(ref.id, it) }
+
+    private fun loadChunk(rowId: String): SealedBox? =
+        db.getItem(rowId)?.takeIf { it.format == Attachments.ROW_FORMAT }?.let { SealedBox(it.nonce, it.ciphertext) }
+
+    private fun encryptEntry(s: Session, entry: Entry): StoredItem {
+        val plain = json.encodeToString(Entry.serializer(), entry).toByteArray(Charsets.UTF_8)
+        try {
+            val box = VaultCrypto.encryptItem(s.key, s.header.vaultId, entry.id, plain)
+            return StoredItem(entry.id, ITEM_FORMAT, box.nonce, box.ciphertext)
+        } finally {
+            Bytes.wipe(plain)
+        }
+    }
+
+    /**
+     * Xóa các đoạn file không còn mục nào trỏ tới (vd. ứng dụng bị tắt giữa chừng ở bản cũ). Chỉ chạy khi MỌI mục đều
+     * giải mã được: mục hỏng có thể vẫn đang trỏ tới file của nó.
+     */
+    private suspend fun cleanOrphanAttachments() {
+        // Đang có thao tác ghi dài (vd. tự backup ra thư mục mạng): bỏ qua, lần mở khóa sau dọn. Không bắt mở khóa chờ.
+        if (!writeMutex.tryLock()) return
+        try {
+            runCatching {
+                withSession { s ->
+                    if (corruptedItemCount != 0) return@withSession
+                    val referenced = s.entries.flatMap { e -> e.attachments.flatMap { rowIds(it) } }.toSet()
+                    val orphans = db.attachmentRowIds() - referenced
+                    if (orphans.isNotEmpty()) commitTx(s.generation, write = { db.deleteItems(orphans) }) { }
                 }
             }
+        } finally {
+            writeMutex.unlock()
         }
     }
 
@@ -289,16 +425,42 @@ class VaultRepository(context: Context) {
 
     // ---------------------------------------------------------------- backup / restore
 
-    /** Khóa và danh sách mục được chụp cùng lúc: vault bị khóa giữa chừng không thể tạo ra backup rỗng. */
-    suspend fun exportBackup(): ByteArray = withContext(Dispatchers.IO) {
+    class ExportResult(val entryCount: Int, val attachmentCount: Int, val skippedAttachments: Int)
+
+    /**
+     * Ghi backup v2 thẳng ra [out]. Khóa và danh sách mục được chụp cùng lúc: vault bị khóa giữa chừng không thể tạo ra
+     * backup rỗng. File đính kèm hỏng / thiếu đoạn được bỏ khỏi backup (và báo lại) để bản backup luôn khôi phục được.
+     */
+    suspend fun exportBackup(out: OutputStream): ExportResult = withContext(Dispatchers.IO) {
         writeMutex.withLock {
             withSession { s ->
+                var skipped = 0
+                val entries = s.entries.map { e ->
+                    if (e.attachments.isEmpty()) return@map e
+                    val ok = e.attachments.filter { ref ->
+                        // Chỉ bỏ file THẬT SỰ hỏng; lỗi khác (hết RAM, lỗi đĩa) => cả lần xuất thất bại, không âm thầm thiếu file.
+                        try {
+                            Attachments.verify(s.key, s.header.vaultId, ref, ::loadChunk); true
+                        } catch (e: DecryptionFailedException) {
+                            skipped++; false
+                        }
+                    }
+                    if (ok.size == e.attachments.size) e else e.copy(attachments = ok)
+                }
                 val payload = json.encodeToString(
                     BackupPayload.serializer(),
-                    BackupPayload(exportedAt = System.currentTimeMillis(), entries = s.entries),
+                    BackupPayload(exportedAt = System.currentTimeMillis(), entries = entries),
                 ).toByteArray(Charsets.UTF_8)
                 try {
-                    BackupFormat.create(s.header, s.key, payload)
+                    val rows = entries.flatMap { e -> e.attachments.flatMap { rowIds(it) } }
+                    BackupFormat.write(out, s.header, s.key, payload, rows) { id ->
+                        // Khóa trong lúc đang ghi: dừng (người gọi xóa file dở), không giữ bản sao khóa vault sau khi khóa.
+                        if (currentGeneration() != s.generation) throw VaultLockedException()
+                        val item = db.getItem(id) ?: throw IllegalStateException("Thiếu đoạn file đính kèm")
+                        BackupFormat.Row(item.id, item.nonce, item.ciphertext)
+                    }
+                    if (currentGeneration() != s.generation) throw VaultLockedException()
+                    ExportResult(entries.size, entries.sumOf { it.attachments.size }, skipped)
                 } finally {
                     Bytes.wipe(payload)
                 }
@@ -349,17 +511,36 @@ class VaultRepository(context: Context) {
                     throw FormatException("Phiên bản nội dung backup không hỗ trợ: ${payload.formatVersion}")
                 }
                 val ids = payload.entries.map { it.id }
-                if (ids.any { it.isBlank() } || ids.toSet().size != ids.size) {
+                if (ids.any { it.isBlank() || Attachments.isAttachmentRowId(it) } || ids.toSet().size != ids.size) {
                     throw FormatException("Backup có mục trùng hoặc thiếu mã định danh")
                 }
                 // File backup có thể do bản khác tạo: giới hạn lịch sử mật khẩu như khi app tự ghi.
                 val entries = payload.entries.map { it.copy(passwordHistory = it.passwordHistory.take(Entry.MAX_HISTORY)) }
-                RestoredBackup(parsed.header, key, entries, payload.exportedAt)
+                verifyBackupAttachments(parsed, key, entries)
+                RestoredBackup(parsed.header, key, entries, payload.exportedAt, parsed)
             } catch (e: Throwable) {
                 Bytes.wipe(key)
                 throw e
             }
         }
+
+    /**
+     * Mọi file đính kèm mà các mục nhắc tới phải có đủ đoạn, giải mã được và đúng SHA-256; file backup không được có
+     * đoạn thừa. Sai => coi như file bị sửa (DecryptionFailedException), không ghi đè vault.
+     */
+    private fun verifyBackupAttachments(parsed: BackupFormat.Parsed, key: ByteArray, entries: List<Entry>) {
+        val refs = entries.flatMap { it.attachments }
+        if (refs.map { it.id }.toSet().size != refs.size) throw DecryptionFailedException()
+        // Kiểm tra mô tả TRƯỚC khi dựng danh sách đoạn (chunks khổng lồ không được làm hết RAM).
+        if (refs.any { it.size !in 0..Attachments.MAX_FILE_SIZE.toLong() || it.chunks != Attachments.chunkCount(it.size.toInt()) || it.id.isBlank() }) {
+            throw DecryptionFailedException()
+        }
+        val expected = refs.flatMap { rowIds(it) }.toSet()
+        if (expected != parsed.rows.map { it.id }.toSet()) throw DecryptionFailedException()
+        for (ref in refs) {
+            Attachments.verify(key, parsed.header.vaultId, ref) { id -> parsed.row(id)?.let(parsed::rowBox) }
+        }
+    }
 
     /** Bước 6: ghi đè vault hiện tại bằng backup trong MỘT transaction, sau đó khóa lại. */
     suspend fun restore(backup: RestoredBackup) = withContext(Dispatchers.IO) {
@@ -374,8 +555,16 @@ class VaultRepository(context: Context) {
                         Bytes.wipe(plain)
                     }
                 }
+                // Đoạn file đính kèm: chép y nguyên (đã mã hóa bằng VEK của chính bản backup, vault mới dùng VEK đó),
+                // đọc dần từ file backup trong lúc ghi để không giữ hai bản trong RAM.
+                val parsed = backup.parsed
+                val rows = parsed.rows.asSequence().map { r ->
+                    val box = parsed.rowBox(r)
+                    StoredItem(r.id, Attachments.ROW_FORMAT, box.nonce, box.ciphertext)
+                }
                 // Meta mới chỉ có header → khóa vân tay cũ (gắn với VEK/vaultId cũ) tự động bị bỏ.
-                db.replaceVault(mapOf(KEY_HEADER to backup.header.encode()), items)
+                db.replaceVault(mapOf(KEY_HEADER to backup.header.encode()), items.asSequence() + rows)
+                restoreCount++
             } finally {
                 backup.discard()
             }
@@ -440,7 +629,7 @@ class VaultRepository(context: Context) {
     /** Giải mã mọi mục rồi mở phiên. Nhận quyền sở hữu [key]: lỗi ở đâu cũng wipe. */
     private fun openSession(key: ByteArray, h: VaultHeader, gen: Long, keyVerified: Boolean) {
         try {
-            val stored = db.allItems()
+            val stored = db.entryItems()
             val entries = ArrayList<Entry>(stored.size)
             var corrupted = 0
             for (item in stored) {
@@ -489,6 +678,27 @@ class VaultRepository(context: Context) {
             return block(s)
         } finally {
             Bytes.wipe(s.key)
+        }
+    }
+
+    /**
+     * Như [commit] cho thao tác ghi LỚN (file đính kèm vài MB, xóa nhiều đoạn với secure_delete): ghi trong một
+     * transaction KHÔNG giữ khóa phiên (lock() trên main thread không phải chờ SQLite), rồi giữ khóa phiên một chút ở
+     * cuối để kiểm tra generation và cập nhật trạng thái; đã bị khóa => ném lỗi, transaction bị hủy, không ghi gì.
+     */
+    private fun commitTx(gen: Long, write: () -> Unit, state: () -> Unit) {
+        db.inTransaction {
+            write()
+            synchronized(sessionLock) {
+                if (generation != gen || vek == null) throw VaultLockedException()
+            }
+        }
+        // Trạng thái trong RAM chỉ đổi SAU khi COMMIT thành công. Bị khóa ngay sau commit thì danh sách đã được xóa,
+        // lần mở khóa sau đọc lại từ DB.
+        // Thứ tự khóa: commit() giữ sessionLock rồi tới DB, commitTx giữ DB rồi sessionLock — an toàn vì cả hai
+        // luôn chạy trong writeMutex.
+        synchronized(sessionLock) {
+            if (generation == gen && vek != null) state()
         }
     }
 

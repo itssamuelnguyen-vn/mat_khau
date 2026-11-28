@@ -19,6 +19,11 @@ import com.samuelcruz.matkhau.core.importer.CsvImportResult
 import com.samuelcruz.matkhau.core.importer.CsvImporter
 import com.samuelcruz.matkhau.core.vault.BackupFormat
 import com.samuelcruz.matkhau.core.vault.WrongSecretException
+import com.samuelcruz.matkhau.core.backup.BackupReminder
+import com.samuelcruz.matkhau.core.totp.OtpMigration
+import com.samuelcruz.matkhau.core.totp.Totp
+import com.samuelcruz.matkhau.core.vault.Attachments
+import com.samuelcruz.matkhau.data.AttachmentLimitException
 import com.samuelcruz.matkhau.data.RestoredBackup
 import com.samuelcruz.matkhau.model.Entry
 import com.samuelcruz.matkhau.model.EntryType
@@ -51,6 +56,10 @@ sealed interface Screen {
     data object Security : Screen
     data object Health : Screen
     data object ImportCsv : Screen
+    /** Nhập mã 2FA từ mã QR "Chuyển tài khoản" của Google Authenticator. */
+    data object ImportTotp : Screen
+    /** Xem một file đính kèm (ảnh / chữ) ngay trong app. */
+    data class Attachment(val entryId: String, val attachmentId: String) : Screen
     data class ChangePassword(val forced: Boolean) : Screen
     /** [replacedUnconfirmed]: key cũ chưa được xác nhận đã chép nên app vừa tạo key mới thay thế. */
     data class ShowRecoveryKey(val key: String, val firstTime: Boolean, val replacedUnconfirmed: Boolean = false) : Screen
@@ -109,6 +118,10 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         private set
     private var importUri: Uri? = null
 
+    /** Nhập 2FA: các tài khoản đã quét (chứa secret: bỏ khi khóa / rời màn hình). */
+    var totpImport by mutableStateOf<TotpImportState?>(null)
+        private set
+
     var autoLockMillis by mutableStateOf(settings.autoLockMillis)
         private set
     var clipboardSeconds by mutableStateOf(settings.clipboardSeconds)
@@ -131,6 +144,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 formError = null
                 clearBackupState()
                 clearImportState()
+                totpImport = null
                 if (lockedScreen != LockedScreen.Create) {
                     lockedScreen = if (repository.initialized.value == false) LockedScreen.Welcome else LockedScreen.Unlock
                 }
@@ -154,6 +168,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         if (top is Screen.ShowRecoveryKey) return true // phải xác nhận đã chép key
         if (top is Screen.Restore) clearBackupState()
         if (top is Screen.ImportCsv) clearImportState()
+        if (top is Screen.ImportTotp) totpImport = null
         stack = stack.dropLast(1)
         return true
     }
@@ -183,24 +198,46 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         app.autoLock.reschedule()
     }
 
-    fun unlock(password: String) = runBusy("Đang mở khóa…") {
-        try {
-            repository.unlockWithPassword(password)
+    /** Còn phải chờ bao lâu sau nhiều lần nhập sai (UI đếm ngược và khóa nút "Mở khóa"). */
+    fun unlockWaitMs(): Long = app.unlockLimiter.remainingMs()
+
+    val unlockFailures: Int get() = app.unlockLimiter.failures
+
+    // Thời gian chờ do UnlockWaitNotice hiện (đếm ngược): thông báo lỗi không ghi kèm để khỏi bị cũ.
+    private fun failureMessage(base: String): String = base
+
+    /**
+     * Một lần thử mật khẩu / Recovery Key qua bộ đếm: tính là sai TRƯỚC khi chạy Argon2id, mở được thì xóa bộ đếm,
+     * lỗi khác (vault bị khóa giữa chừng...) thì không tính.
+     */
+    private fun attemptUnlock(busy: String, wrongMessage: String, attempt: suspend () -> Unit) {
+        if (busyText != null) return
+        app.unlockLimiter.tryBegin().takeIf { it > 0 }?.let { formError = null; return }
+        runBusy(busy) {
+            try {
+                attempt()
+                app.unlockLimiter.reset()
+            } catch (e: WrongSecretException) {
+                formError = failureMessage(wrongMessage)
+                return@runBusy
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e   // màn hình đóng giữa chừng: vẫn tính là một lần thử
+            } catch (e: Exception) {
+                app.unlockLimiter.cancel()   // vault bị khóa giữa chừng, lỗi đọc DB...: không phải đoán sai
+                throw e
+            }
             afterUnlock()
-        } catch (e: WrongSecretException) {
-            formError = "Sai mật khẩu chính"
         }
     }
 
-    fun unlockWithRecoveryKey(text: String) = runBusy("Đang kiểm tra Recovery Key…") {
-        try {
-            repository.unlockWithRecoveryKey(text)
-            settings.recoveryKeyPending = false   // vừa dùng Recovery Key => người dùng đang giữ nó
-            settings.mustChangePassword = true    // giữ qua các lần khóa/mở (kể cả mở bằng vân tay) tới khi đổi xong
-            afterUnlock()
-        } catch (e: WrongSecretException) {
-            formError = "Recovery Key không đúng"
-        }
+    fun unlock(password: String) = attemptUnlock("Đang mở khóa…", "Sai mật khẩu chính") {
+        repository.unlockWithPassword(password)
+    }
+
+    fun unlockWithRecoveryKey(text: String) = attemptUnlock("Đang kiểm tra Recovery Key…", "Recovery Key không đúng") {
+        repository.unlockWithRecoveryKey(text)
+        settings.recoveryKeyPending = false   // vừa dùng Recovery Key => người dùng đang giữ nó
+        settings.mustChangePassword = true    // giữ qua các lần khóa/mở (kể cả mở bằng vân tay) tới khi đổi xong
     }
 
     fun unlockWithBiometric(activity: FragmentActivity) = viewModelScope.launch {
@@ -255,6 +292,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 runBusy("Đang mở khóa…") {
                     try {
                         repository.unlockWithKey(key, gen)
+                        app.unlockLimiter.reset()   // chủ máy vừa chứng minh bằng vân tay: đếm lại từ đầu
                         afterUnlock()
                     } catch (e: WrongSecretException) {
                         disableBiometricInternal()
@@ -337,6 +375,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 passwordUpdatedAt = existing.passwordUpdatedAt,
                 passwordHistory = existing.passwordHistory,
                 linkedApps = existing.linkedApps,
+                attachments = existing.attachments,   // file đính kèm được thêm / xóa ở màn chi tiết, không qua form
             ).withPassword(draft.password, now)
             else -> draft.copy(updatedAt = now)
         }
@@ -496,30 +535,29 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         app.autoLock.resume()
         if (uri == null) return
         runBusy("Đang tạo backup…") {
-            val bytes = try {
-                repository.exportBackup()
-            } catch (e: Exception) {
-                deleteQuietly(context, uri)   // CreateDocument đã tạo sẵn file rỗng: không để lại file hỏng
-                throw e
-            }
-            withContext(Dispatchers.IO) {
+            val changes = settings.changesSinceBackup
+            val result = try {
+                // Ghi thẳng ra file (backup có file đính kèm có thể vài chục MB: không dựng cả file trong RAM).
                 // "wt" = ghi đè từ đầu; vài nơi lưu (vd. Google Drive) không hỗ trợ "wt" nên thử lại với "w"
                 // (file vừa tạo bằng CreateDocument vốn rỗng).
-                val out = try {
-                    context.contentResolver.openOutputStream(uri, "wt")
-                } catch (e: Exception) {
-                    context.contentResolver.openOutputStream(uri, "w")
-                }
-                try {
-                    out?.use { it.write(bytes) } ?: throw IllegalStateException("Không mở được file để ghi")
-                } catch (e: Exception) {
-                    deleteQuietly(context, uri)
-                    throw e
-                }
+                val out = withContext(Dispatchers.IO) {
+                    try {
+                        context.contentResolver.openOutputStream(uri, "wt")
+                    } catch (e: Exception) {
+                        context.contentResolver.openOutputStream(uri, "w")
+                    }
+                } ?: throw IllegalStateException("Không mở được file để ghi")
+                out.use { raw -> java.io.BufferedOutputStream(raw, 256 * 1024).use { repository.exportBackup(it) } }
+            } catch (e: Exception) {
+                deleteQuietly(context, uri)   // CreateDocument đã tạo sẵn file: không để lại file hỏng
+                throw e
             }
+            settings.markBackedUp(changes, System.currentTimeMillis())
             val corrupted = repository.corruptedItemCount
-            snackbar = "Đã lưu backup (${repository.entries.value.size} mục). Hãy cất file ở nơi an toàn." +
-                if (corrupted > 0) " $corrupted mục bị hỏng KHÔNG có trong backup." else ""
+            snackbar = "Đã lưu backup (${result.entryCount} mục" +
+                (if (result.attachmentCount > 0) ", ${result.attachmentCount} file" else "") + "). Hãy cất file ở nơi an toàn." +
+                (if (corrupted > 0) " $corrupted mục bị hỏng KHÔNG có trong backup." else "") +
+                (if (result.skippedAttachments > 0) " ${result.skippedAttachments} file đính kèm bị hỏng KHÔNG có trong backup." else "")
         }
     }
 
@@ -529,8 +567,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         runBusy("Đang đọc file…") {
             val bytes = try {
                 withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { input -> readAtMost(input, BackupFormat.MAX_FILE_SIZE) }
-                        ?: throw FormatException("Không đọc được file")
+                    readUri(context, uri, BackupFormat.MAX_FILE_SIZE)
                 }
             } catch (e: FormatException) {
                 snackbar = "File không hợp lệ: ${e.message}"
@@ -585,10 +622,12 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             // Cờ của vault cũ không áp dụng cho vault vừa khôi phục (tránh tự tạo Recovery Key mới, làm key giấy vô hiệu).
             settings.recoveryKeyPending = false
             settings.mustChangePassword = false
+            settings.resetBackupState(backup.exportedAt)   // vault bây giờ đúng bằng bản backup đó
             disableBiometricInternal()
             pendingBackup = null
             lockedScreen = LockedScreen.Unlock
-            snackbar = "Đã khôi phục ${backup.entries.size} mục. Hãy mở khóa bằng mật khẩu của bản backup."
+            snackbar = "Đã khôi phục ${backup.entries.size} mục" +
+                (if (backup.attachmentCount > 0) ", ${backup.attachmentCount} file" else "") + ". Hãy mở khóa bằng mật khẩu của bản backup."
         }
     }
 
@@ -600,10 +639,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         if (uri == null) return
         runBusy("Đang đọc file CSV…") {
             val result = try {
-                val bytes = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { readAtMost(it, MAX_CSV_SIZE) }
-                        ?: throw FormatException("Không đọc được file")
-                }
+                val bytes = readUri(context, uri, MAX_CSV_SIZE)
                 val text = try {
                     CsvImporter.decode(bytes)
                 } finally {
@@ -664,10 +700,267 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         pendingBackup = null
     }
 
+    // ------------------------------------------------------------------ nhắc backup / tự backup
+
+    /** Lời nhắc trên màn danh sách, null = không cần nhắc. Tự backup đang chạy tốt thì không nhắc. */
+    /** Tăng mỗi lần tự backup chạy xong (chạy ngầm): để lời nhắc / màn Cài đặt đọc lại. */
+    val autoBackupRuns = app.autoBackup.runs
+
+    fun backupReminder(): String? {
+        val error = settings.autoBackupLastError
+        val snoozed = System.currentTimeMillis() < settings.backupReminderSnoozedUntil
+        if (app.autoBackup.isEnabled && error != null && !snoozed) return "Tự backup đang lỗi: $error"
+        return BackupReminder.message(
+            entryCount = repository.entries.value.size,
+            lastBackupAt = settings.lastBackupAt,
+            changes = settings.changesSinceBackup,
+            snoozedUntil = settings.backupReminderSnoozedUntil,
+            now = System.currentTimeMillis(),
+        )
+    }
+
+    var reminderVersion by mutableStateOf(0)
+        private set
+
+    fun snoozeBackupReminder() {
+        settings.backupReminderSnoozedUntil = System.currentTimeMillis() + BackupReminder.SNOOZE_MS
+        reminderVersion++
+    }
+
+    /** Người dùng chọn thư mục tự backup (OpenDocumentTree): giữ quyền lâu dài rồi ghi bản đầu tiên ngay. */
+    fun setAutoBackupFolder(context: Context, uri: Uri?) {
+        app.autoLock.resume()
+        if (uri == null) return
+        val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        try {
+            context.contentResolver.takePersistableUriPermission(uri, flags)
+        } catch (e: Exception) {
+            snackbar = "Nơi lưu này không cho giữ quyền ghi lâu dài. Hãy chọn thư mục khác."
+            return
+        }
+        settings.autoBackupTreeUri?.takeIf { it != uri.toString() }?.let { old -> releaseFolder(context, old) }
+        settings.autoBackupTreeUri = uri.toString()
+        settings.autoBackupLastError = null
+        runAutoBackupNow()
+    }
+
+    fun disableAutoBackup(context: Context) {
+        settings.autoBackupTreeUri?.let { releaseFolder(context, it) }
+        settings.autoBackupTreeUri = null
+        settings.autoBackupLastError = null
+        reminderVersion++
+        snackbar = "Đã tắt tự backup (các file đã ghi vẫn còn trong thư mục)"
+    }
+
+    private fun releaseFolder(context: Context, uri: String) {
+        runCatching {
+            context.contentResolver.releasePersistableUriPermission(
+                Uri.parse(uri),
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+        }
+    }
+
+    fun runAutoBackupNow() = runBusy("Đang ghi backup…") {
+        val error = app.autoBackup.runNow()
+        reminderVersion++
+        snackbar = error ?: "Đã ghi bản tự backup (giữ ${com.samuelcruz.matkhau.security.AutoBackup.KEEP} bản mới nhất)"
+    }
+
+    fun autoBackupFolderLabel(context: Context): String? {
+        val uri = settings.autoBackupTreeUri?.let(Uri::parse) ?: return null
+        return runCatching {
+            val treeId = android.provider.DocumentsContract.getTreeDocumentId(uri)
+            // "primary:Download/MatKhau" -> "Download/MatKhau"; nhà cung cấp khác: hiện nguyên id
+            treeId.substringAfter(':', treeId).ifEmpty { "Bộ nhớ máy" }
+        }.getOrNull() ?: uri.toString()
+    }
+
+    // ------------------------------------------------------------------ file đính kèm
+
+    /** Đọc file người dùng chọn (≤ 10 MB) và thêm vào mục (mã hóa từng đoạn, một transaction). */
+    fun addAttachment(context: Context, entryId: String, uri: Uri?) {
+        app.autoLock.resume()
+        if (uri == null) return
+        runBusy("Đang mã hóa file…") {
+            val (name, mime) = withContext(Dispatchers.IO) { describe(context, uri) }
+            val data = try {
+                readUri(context, uri, Attachments.MAX_FILE_SIZE)
+            } catch (e: FormatException) {
+                snackbar = if (e.message == "File quá lớn") "File lớn hơn ${Attachments.MAX_FILE_SIZE / (1024 * 1024)} MB" else "Không đọc được file"
+                return@runBusy
+            }
+            try {
+                repository.addAttachment(entryId, name, mime, data)
+                snackbar = "Đã thêm “$name” (đã mã hóa). File gốc vẫn còn ở chỗ cũ: xóa nếu không cần."
+            } catch (e: AttachmentLimitException) {
+                snackbar = e.message
+            } finally {
+                Bytes.wipe(data)
+            }
+        }
+    }
+
+    /** Giải mã một file để xem / xuất. Người gọi wipe mảng khi xong. */
+    suspend fun readAttachment(entryId: String, attachmentId: String): ByteArray? = try {
+        repository.readAttachment(entryId, attachmentId)
+    } catch (e: DecryptionFailedException) {
+        snackbar = "File đính kèm bị hỏng hoặc bị sửa đổi"
+        null
+    } catch (e: com.samuelcruz.matkhau.data.VaultLockedException) {
+        null
+    }
+
+    fun deleteAttachment(entryId: String, attachmentId: String) = runBusy(null) {
+        repository.deleteAttachment(entryId, attachmentId)
+        stack = stack.filterNot { it is Screen.Attachment && it.attachmentId == attachmentId }.ifEmpty { listOf(Screen.VaultList) }
+        snackbar = "Đã xóa file đính kèm"
+    }
+
+    /** Xuất file ra ngoài (KHÔNG mã hóa) tới nơi người dùng chọn. */
+    fun exportAttachment(context: Context, entryId: String, attachmentId: String, uri: Uri?) {
+        app.autoLock.resume()
+        if (uri == null) return
+        runBusy("Đang xuất file…") {
+            val data = readAttachment(entryId, attachmentId) ?: run { deleteQuietly(context, uri); return@runBusy }
+            try {
+                withContext(Dispatchers.IO) {
+                    val out = try {
+                        context.contentResolver.openOutputStream(uri, "wt")
+                    } catch (e: Exception) {
+                        context.contentResolver.openOutputStream(uri, "w")
+                    } ?: throw IllegalStateException()
+                    out.use { it.write(data) }
+                }
+                snackbar = "Đã xuất file (KHÔNG mã hóa). Xóa bản đó khi dùng xong."
+            } catch (e: Exception) {
+                deleteQuietly(context, uri)
+                throw e
+            } finally {
+                Bytes.wipe(data)
+            }
+        }
+    }
+
+    private fun describe(context: Context, uri: Uri): Pair<String, String> {
+        var name = "file"
+        runCatching {
+            context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0)?.let { name = it }
+            }
+        }
+        val mime = runCatching { context.contentResolver.getType(uri) }.getOrNull() ?: "application/octet-stream"
+        return name to mime
+    }
+
+    // ------------------------------------------------------------------ nhập 2FA từ Google Authenticator
+
+    fun startTotpImport() {
+        totpImport = TotpImportState()
+        navigate(Screen.ImportTotp)
+    }
+
+    /** Thêm một mã QR (hoặc URI dán tay) vào danh sách chờ nhập. Trả về thông báo cho người dùng. */
+    fun addMigrationCode(text: String): String {
+        val state = totpImport ?: return ""
+        val batch = try {
+            OtpMigration.parse(text)
+        } catch (e: FormatException) {
+            return e.message ?: "Mã QR không hợp lệ"
+        }
+        val existingSecrets = repository.entries.value.mapNotNull { e ->
+            e.totp.takeIf { it.isNotBlank() }?.let { Totp.parseOrNull(it)?.secret?.let(com.samuelcruz.matkhau.core.format.Base32::encode) }
+        }.toSet()
+        var added = 0
+        var duplicates = 0
+        val accounts = state.accounts.toMutableList()
+        val skipped = state.skipped.toMutableList()
+        for (a in batch.accounts) {
+            val key = com.samuelcruz.matkhau.core.format.Base32.encode(a.secret)
+            val reason = a.unsupportedReason
+            when {
+                reason != null -> skipped += "${a.issuer.ifBlank { a.account }}: $reason"
+                key in existingSecrets || accounts.any { com.samuelcruz.matkhau.core.format.Base32.encode(it.secret) == key } -> duplicates++
+                else -> { accounts += a; added++ }
+            }
+        }
+        val batches = state.batches + (batch.batchId to batch.batchIndex)
+        totpImport = state.copy(accounts = accounts, skipped = skipped, batches = batches, batchSize = batch.batchSize, duplicates = state.duplicates + duplicates)
+        val seen = batches.count { it.first == batch.batchId }
+        return buildString {
+            append("Mã QR ${batch.batchIndex + 1}/${batch.batchSize}: thêm $added tài khoản")
+            if (duplicates > 0) append(", $duplicates đã có")
+            if (seen < batch.batchSize) append(". Quét tiếp các mã còn lại")
+        }
+    }
+
+    fun removeTotpAccount(index: Int) {
+        val state = totpImport ?: return
+        totpImport = state.copy(accounts = state.accounts.filterIndexed { i, _ -> i != index })
+    }
+
+    fun confirmTotpImport() {
+        val state = totpImport ?: return
+        if (state.accounts.isEmpty()) return
+        runBusy("Đang nhập ${state.accounts.size} mã 2FA…") {
+            val now = System.currentTimeMillis()
+            val entries = state.accounts.map { a ->
+                Entry(
+                    id = UUID.randomUUID().toString(),
+                    type = EntryType.LOGIN,
+                    title = a.issuer.ifBlank { a.account.ifBlank { "Mã 2FA" } },
+                    username = a.account,
+                    totp = a.toOtpauthUri(),
+                    createdAt = now,
+                    updatedAt = now,
+                )
+            }
+            repository.importEntries(entries)   // một transaction
+            totpImport = null
+            stack = stack.filterNot { it == Screen.ImportTotp }.ifEmpty { listOf(Screen.VaultList) }
+            snackbar = "Đã nhập ${entries.size} mã 2FA. Bạn có thể sửa từng mục để thêm mật khẩu / URL, rồi xóa tài khoản trong app cũ."
+        }
+    }
+
     // ------------------------------------------------------------------ tiện ích
 
     private fun deleteQuietly(context: Context, uri: Uri) {
         runCatching { android.provider.DocumentsContract.deleteDocument(context.contentResolver, uri) }
+    }
+
+    /**
+     * Đọc file từ Storage Access Framework, tối đa [limit] byte. Biết trước kích thước thì cấp phát đúng một mảng
+     * (file backup vài chục MB không bị chép 2–3 lần trong RAM).
+     */
+    private suspend fun readUri(context: Context, uri: Uri, limit: Int): ByteArray = withContext(Dispatchers.IO) {
+        val size = runCatching {
+            context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)?.use { c ->
+                if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null
+            }
+        }.getOrNull()
+        if (size != null && size > limit) throw FormatException("File quá lớn")
+        val input = context.contentResolver.openInputStream(uri) ?: throw FormatException("Không đọc được file")
+        input.use {
+            if (size != null && size in 0..limit.toLong()) {
+                try {
+                    val buf = ByteArray(size.toInt())
+                    var off = 0
+                    while (off < buf.size) {
+                        val n = it.read(buf, off, buf.size - off)
+                        if (n < 0) break
+                        off += n
+                    }
+                    // Kích thước báo sai (file đang đổi): đọc lại kiểu thường cho chắc.
+                    if (off == buf.size && it.read() == -1) return@withContext buf
+                    Bytes.wipe(buf)
+                } catch (e: OutOfMemoryError) {
+                    throw FormatException("File quá lớn so với bộ nhớ của máy")
+                }
+                return@withContext context.contentResolver.openInputStream(uri)?.use { again -> readAtMost(again, limit) }
+                    ?: throw FormatException("Không đọc được file")
+            }
+            readAtMost(it, limit)
+        }
     }
 
     /** Đọc tối đa [limit] byte; file lớn hơn bị từ chối mà không phải nạp hết vào RAM. */
@@ -711,6 +1004,18 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         clearBackupState()
+        totpImport = null
         super.onCleared()
     }
+}
+
+/** Các tài khoản 2FA đã quét, chờ nhập. [batches] = (batchId, batchIndex) đã quét, để biết còn thiếu mã QR nào. */
+data class TotpImportState(
+    val accounts: List<OtpMigration.Account> = emptyList(),
+    val skipped: List<String> = emptyList(),
+    val batches: Set<Pair<Int, Int>> = emptySet(),
+    val batchSize: Int = 1,
+    val duplicates: Int = 0,
+) {
+    override fun toString(): String = "TotpImportState(${accounts.size})"
 }

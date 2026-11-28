@@ -29,6 +29,7 @@ object VaultCrypto {
     private const val SLOT_RECOVERY: Byte = 2
     private val SLOT_CONTEXT = "localvault/key-slot/v1".toByteArray(Charsets.US_ASCII)
     private val ITEM_CONTEXT = "localvault/item/v1".toByteArray(Charsets.US_ASCII)
+    private val ATTACHMENT_CONTEXT = "localvault/attachment/v1".toByteArray(Charsets.US_ASCII)
 
     fun createVault(password: ByteArray, params: KdfParams = KdfParams.DEFAULT): CreatedVault {
         val vaultId = Bytes.random(VaultHeader.VAULT_ID_LENGTH)
@@ -68,6 +69,16 @@ object VaultCrypto {
     fun decryptItem(vek: ByteArray, vaultId: ByteArray, itemId: String, box: SealedBox): ByteArray =
         Aead.open(vek, box, itemAad(vaultId, itemId))
 
+    /**
+     * Một đoạn (chunk) của file đính kèm. AAD gắn đoạn với vault, file, VỊ TRÍ và TỔNG SỐ đoạn: không tráo đoạn giữa
+     * các file, không đổi thứ tự, không cắt bớt đoạn cuối mà không bị phát hiện.
+     */
+    fun encryptAttachmentChunk(vek: ByteArray, vaultId: ByteArray, attachmentId: String, index: Int, count: Int, plaintext: ByteArray): SealedBox =
+        Aead.seal(vek, plaintext, attachmentAad(vaultId, attachmentId, index, count))
+
+    fun decryptAttachmentChunk(vek: ByteArray, vaultId: ByteArray, attachmentId: String, index: Int, count: Int, box: SealedBox): ByteArray =
+        Aead.open(vek, box, attachmentAad(vaultId, attachmentId, index, count))
+
     // ---------------------------------------------------------------------------------------
 
     private fun makeSlot(secret: ByteArray, vek: ByteArray, vaultId: ByteArray, params: KdfParams, type: Byte): KeySlot {
@@ -97,6 +108,13 @@ object VaultCrypto {
     }
 
     private fun slotAad(vaultId: ByteArray, type: Byte) = Bytes.concat(SLOT_CONTEXT, byteArrayOf(type), vaultId)
+
+    private fun attachmentAad(vaultId: ByteArray, attachmentId: String, index: Int, count: Int): ByteArray {
+        require(index in 0 until count)
+        val position = java.nio.ByteBuffer.allocate(8).putInt(index).putInt(count).array()
+        // Phần có độ dài thay đổi (id) đặt cuối cùng để cách ghép không bị nhập nhằng.
+        return Bytes.concat(ATTACHMENT_CONTEXT, vaultId, position, attachmentId.toByteArray(Charsets.UTF_8))
+    }
 
     private fun itemAad(vaultId: ByteArray, itemId: String) =
         Bytes.concat(ITEM_CONTEXT, vaultId, itemId.toByteArray(Charsets.UTF_8))

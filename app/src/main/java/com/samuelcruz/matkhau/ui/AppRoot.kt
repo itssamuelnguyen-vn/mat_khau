@@ -38,6 +38,10 @@ import com.samuelcruz.matkhau.ui.screens.EntryEditScreen
 import com.samuelcruz.matkhau.ui.screens.GeneratorScreen
 import com.samuelcruz.matkhau.ui.screens.HealthScreen
 import com.samuelcruz.matkhau.ui.screens.ImportCsvScreen
+import com.samuelcruz.matkhau.ui.screens.ImportTotpScreen
+import com.samuelcruz.matkhau.ui.screens.AttachmentScreen
+import com.samuelcruz.matkhau.security.VaultClipboard
+import androidx.compose.ui.platform.LocalClipboard
 import com.samuelcruz.matkhau.ui.screens.RecoveryUnlockScreen
 import com.samuelcruz.matkhau.ui.screens.RestoreScreen
 import com.samuelcruz.matkhau.ui.screens.SecurityScreen
@@ -65,7 +69,15 @@ fun AppRoot(vm: VaultViewModel) {
     val secretGuard: (String, () -> Unit) -> Unit = remember(hostActivity) {
         { reason, action -> if (hostActivity != null) SecretGuard.run(hostActivity, reason, action = action) else action() }
     }
-    CompositionLocalProvider(LocalUserActivity provides vm::userActivity, LocalSecretGuard provides secretGuard) {
+    // Copy / Cắt từ thanh chọn chữ của mọi ô nhập cũng đi qua clipboard tự xóa (đánh dấu nhạy cảm).
+    val context = LocalContext.current
+    val systemClipboard = LocalClipboard.current
+    val vaultClipboard = remember(systemClipboard) { VaultClipboard(context.applicationContext, systemClipboard) { vm.clipboardSeconds } }
+    CompositionLocalProvider(
+        LocalUserActivity provides vm::userActivity,
+        LocalSecretGuard provides secretGuard,
+        LocalClipboard provides vaultClipboard,
+    ) {
     // Mỗi lần mở khóa VÀ mỗi lần app quay lại foreground: vault có thể vừa được mở từ màn hình tự động điền.
     LaunchedEffect(unlocked) { if (unlocked) vm.ensureForcedFlows() }
     LifecycleResumeEffect(unlocked) {
@@ -86,6 +98,8 @@ fun AppRoot(vm: VaultViewModel) {
                 Screen.Security -> SecurityScreen(vm)
                 Screen.Health -> HealthScreen(vm)
                 Screen.ImportCsv -> ImportCsvScreen(vm)
+                Screen.ImportTotp -> ImportTotpScreen(vm)
+                is Screen.Attachment -> AttachmentScreen(vm, screen.entryId, screen.attachmentId)
                 is Screen.ChangePassword -> ChangePasswordScreen(vm, screen.forced)
                 is Screen.ShowRecoveryKey -> ShowRecoveryKeyScreen(vm, screen.key, screen.firstTime, screen.replacedUnconfirmed)
                 Screen.Restore -> RestoreScreen(vm)

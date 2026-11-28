@@ -55,7 +55,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - Rời màn hình (hủy, quét xong, vault tự khóa) => camera được tắt trong onDispose.
  */
 @Composable
-fun QrScanScreen(onResult: (String) -> Unit, onCancel: () -> Unit) {
+fun QrScanScreen(
+    onResult: (String) -> Unit,
+    onCancel: () -> Unit,
+    title: String = "Đưa mã QR 2FA vào trong khung",
+    /** null = nhận mã này; chuỗi = lý do không nhận (hiện cho người dùng, quét tiếp). Chạy trên luồng phân tích ảnh. */
+    accept: (String) -> String? = ::acceptTotpQr,
+) {
+    val currentAccept by rememberUpdatedState(accept)
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentOnResult by rememberUpdatedState(onResult)
@@ -101,10 +108,11 @@ fun QrScanScreen(onResult: (String) -> Unit, onCancel: () -> Unit) {
                     image.close()
                 }
                 if (text != null) {
-                    if (Totp.isValid(text)) {
+                    val refusal = try { currentAccept(text) } catch (e: Exception) { "Không đọc được mã QR này" }
+                    if (refusal == null) {
                         if (finished.compareAndSet(false, true)) mainExecutor.execute { currentOnResult(text) }
                     } else {
-                        mainExecutor.execute { message = "Mã QR này không phải mã 2FA (otpauth://totp hoặc secret Base32)" }
+                        mainExecutor.execute { message = refusal }
                     }
                 }
             }
@@ -155,7 +163,7 @@ fun QrScanScreen(onResult: (String) -> Unit, onCancel: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                "Đưa mã QR 2FA vào trong khung",
+                title,
                 color = Color.White,
                 style = MaterialTheme.typography.titleMedium,
                 textAlign = TextAlign.Center,
@@ -169,6 +177,14 @@ fun QrScanScreen(onResult: (String) -> Unit, onCancel: () -> Unit) {
             )
         }
     }
+}
+
+/** Mặc định: chỉ nhận mã 2FA của một tài khoản (otpauth://totp hoặc secret Base32). */
+fun acceptTotpQr(text: String): String? = when {
+    Totp.isValid(text) -> null
+    com.samuelcruz.matkhau.core.totp.OtpMigration.isMigrationUri(text) ->
+        "Đây là mã chuyển NHIỀU tài khoản của Google Authenticator: dùng Cài đặt → Nhập mã 2FA từ Google Authenticator"
+    else -> "Mã QR này không phải mã 2FA (otpauth://totp hoặc secret Base32)"
 }
 
 /** Lấy kênh độ sáng (Y) của khung hình YUV_420_888 rồi giải mã; mảng tạm được ghi đè bằng 0 ngay sau đó. */

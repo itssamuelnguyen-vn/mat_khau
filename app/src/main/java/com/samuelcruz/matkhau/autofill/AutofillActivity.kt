@@ -83,7 +83,8 @@ class AutofillActivity : FragmentActivity() {
                 screen = baked
                 val entryId = intent.getStringExtra(EXTRA_ENTRY_ID)
                 // Đường nhanh: vault đang mở + mục vẫn khớp => điền luôn, không hiện màn hình.
-                if (entryId != null && vm.repository.isUnlocked()) {
+                // Thẻ KHÔNG có đường nhanh: luôn qua màn xác nhận ghi rõ nơi nhận thẻ (CardPick chọn sẵn thẻ vừa bấm).
+                if (entryId != null && baked.card == null && vm.repository.isUnlocked()) {
                     vm.repository.entries.value.firstOrNull { it.id == entryId }
                         ?.takeIf { AutofillMatcher.matches(it, baked.target) }
                         ?.let { if (fill(it)) return }
@@ -126,13 +127,28 @@ class AutofillActivity : FragmentActivity() {
      */
     private fun fill(entry: Entry, afterAuth: () -> Unit = {}): Boolean {
         val s = screen ?: return false
-        val dataset = buildDataset(this, s, entry) ?: return false
-        SecretGuard.run(this, "Điền “${entry.title}”", onDenied = { finish() }) {
+        val isCard = s.card != null
+        if (isCard && (entry.type != com.samuelcruz.matkhau.model.EntryType.CARD || !AutofillMatcher.cardAllowed(s.target))) return false
+        val dataset = (if (isCard) buildCardDataset(this, s, entry) else buildDataset(this, s, entry)) ?: return false
+        if (isCard && !SecretGuard.isAvailable(this)) {
+            // Không có vân tay / khóa màn hình thì không có gì chặn người khác (hay mã độc) điền thẻ của bạn.
+            vm.snackbar = "Máy chưa có vân tay hoặc khóa màn hình: Mật Khẩu không điền thẻ."
+            return true
+        }
+        // Thẻ: LUÔN hỏi vân tay (như trình duyệt hỏi lại CVV), kể cả khi chưa bật tùy chọn xác thực mỗi lần.
+        val reason = if (isCard) "Điền thẻ “${entry.title}” vào ${receiverLabel(s)}" else "Điền “${entry.title}”"
+        SecretGuard.run(this, reason, force = isCard, onDenied = { finish() }) {
             afterAuth()   // vd. lưu liên kết app / URL: chỉ khi người dùng đã xác thực xong
             setResult(RESULT_OK, Intent().putExtra(AutofillManager.EXTRA_AUTHENTICATION_RESULT, dataset))
             finish()
         }
         return true
+    }
+
+    private fun receiverLabel(s: ParsedScreen): String = when (val t = s.target) {
+        is AutofillTarget.Web -> t.host
+        is AutofillTarget.UnverifiedBrowser -> t.host
+        is AutofillTarget.App -> AppIdentity.label(this, t.packageName)
     }
 
     override fun onContentChanged() {
@@ -161,7 +177,7 @@ class AutofillActivity : FragmentActivity() {
         val t = s.target as? AutofillTarget.UnverifiedBrowser ?: return
         val cert = t.certSha256 ?: return
         app.settings.trustBrowser(t.packageName, cert)
-        screen = ParsedScreen(s.packageName, AutofillTarget.Web(t.host, t.scheme, t.packageName), s.usernameId, s.passwordIds, s.newPasswordIds)
+        screen = ParsedScreen(s.packageName, AutofillTarget.Web(t.host, t.scheme, t.packageName), s.usernameId, s.passwordIds, s.newPasswordIds, card = s.card)
     }
 
     /** Activity đóng ngay sau khi điền, nên lưu ở scope của app; lỗi thì báo bằng Toast. */
@@ -198,6 +214,31 @@ class AutofillActivity : FragmentActivity() {
          * Dataset chứa giá trị thật của mục (chỉ tạo SAU khi người dùng đã chọn mục). Mật khẩu chỉ vào ô mật khẩu
          * HIỆN TẠI, không bao giờ vào ô mật khẩu mới / nhập lại.
          */
+        /** Dataset cho form thanh toán: số thẻ, tên chủ thẻ, hết hạn (gộp hoặc tháng / năm), CVV. */
+        @Suppress("DEPRECATION")
+        fun buildCardDataset(context: Context, screen: ParsedScreen, entry: Entry): Dataset? {
+            val fields = screen.card ?: return null
+            val card = entry.card ?: return null
+            if (card.number.isEmpty()) return null
+            val b = Dataset.Builder(MatKhauAutofillService.presentation(context, entry.title, com.samuelcruz.matkhau.core.card.PaymentCard.masked(card.number)))
+            b.setValue(fields.number, AutofillValue.forText(card.number))
+            fields.holder?.takeIf { card.holder.isNotEmpty() }?.let { b.setValue(it, AutofillValue.forText(card.holder)) }
+            com.samuelcruz.matkhau.core.card.PaymentCard.parseExpiry(card.expiry)?.let { exp ->
+                fields.expiry?.let { id ->
+                    val text = when (fields.expiryPattern) {
+                        "MM/YYYY" -> "%02d/%04d".format(exp.month, exp.year)
+                        "MMYY" -> "%02d%02d".format(exp.month, exp.year % 100)
+                        else -> exp.mmyy
+                    }
+                    b.setValue(id, AutofillValue.forText(text))
+                }
+                fields.expMonth?.let { b.setValue(it, AutofillValue.forText("%02d".format(exp.month))) }
+                fields.expYear?.let { b.setValue(it, AutofillValue.forText(if (fields.fourDigitYear) "%04d".format(exp.year) else "%02d".format(exp.year % 100))) }
+            }
+            fields.cvc?.takeIf { card.cvv.isNotEmpty() }?.let { b.setValue(it, AutofillValue.forText(card.cvv)) }
+            return b.build()
+        }
+
         @Suppress("DEPRECATION")
         fun buildDataset(context: Context, screen: ParsedScreen, entry: Entry): Dataset? {
             val b = Dataset.Builder(MatKhauAutofillService.presentation(context, entry.title, entry.username))

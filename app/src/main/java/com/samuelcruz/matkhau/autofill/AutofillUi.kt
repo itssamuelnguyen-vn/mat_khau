@@ -74,7 +74,16 @@ private fun AutofillFrame(vm: VaultViewModel, onCancel: () -> Unit, content: @Co
     val secretGuard: (String, () -> Unit) -> Unit = remember(activity) {
         { reason, action -> if (activity != null) SecretGuard.run(activity, reason, action = action) else action() }
     }
-    CompositionLocalProvider(LocalUserActivity provides vm::userActivity, LocalSecretGuard provides secretGuard) {
+    val context = LocalContext.current
+    val systemClipboard = androidx.compose.ui.platform.LocalClipboard.current
+    val vaultClipboard = remember(systemClipboard) {
+        com.samuelcruz.matkhau.security.VaultClipboard(context.applicationContext, systemClipboard) { vm.clipboardSeconds }
+    }
+    CompositionLocalProvider(
+        LocalUserActivity provides vm::userActivity,
+        LocalSecretGuard provides secretGuard,
+        androidx.compose.ui.platform.LocalClipboard provides vaultClipboard,
+    ) {
         Box(Modifier.fillMaxSize()) {
             when {
                 unlocked -> content()
@@ -172,6 +181,11 @@ fun AutofillPickRoot(
         var query by remember { mutableStateOf("") }
         var confirm by remember { mutableStateOf<Entry?>(null) }
 
+        if (screen.card != null) {
+            CardPick(vm, screen, label, detail, preferredEntryId, onFill, onTrustBrowser, onCancel)
+            return@AutofillFrame
+        }
+
         // Vừa mở khóa từ một dòng đề xuất cụ thể: điền luôn nếu mục đó vẫn khớp.
         LaunchedEffect(preferredEntryId) {
             entries.firstOrNull { it.id == preferredEntryId }?.takeIf { AutofillMatcher.matches(it, target) }?.let { onFill(it) }
@@ -241,6 +255,70 @@ fun AutofillPickRoot(
                 onSetUrlAndFill = { url -> confirm = null; if (!onSetUrlAndFill(e, url)) vm.snackbar = "Mục này không có username / mật khẩu để điền" },
             )
         }
+    }
+}
+
+/**
+ * Chọn thẻ cho form thanh toán. Không có "liên kết": mỗi lần điền đều xác nhận nơi nhận thẻ rồi hỏi vân tay.
+ */
+@Composable
+private fun CardPick(
+    vm: VaultViewModel,
+    screen: ParsedScreen,
+    label: String,
+    detail: String,
+    preferredEntryId: String?,
+    onFill: (Entry) -> Boolean,
+    onTrustBrowser: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val entries by vm.repository.entries.collectAsState()
+    val target = screen.target
+    val cards = AutofillMatcher.cards(entries)
+    // Vừa mở khóa từ dòng đề xuất của một thẻ: hỏi xác nhận thẻ đó luôn.
+    var confirm by remember { mutableStateOf(cards.firstOrNull { it.id == preferredEntryId && AutofillMatcher.cardAllowed(target) }) }
+    AppScaffold(title = "Điền thẻ", onBack = onCancel) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Điền thẻ vào: $label", style = MaterialTheme.typography.titleMedium)
+                Hint(detail)
+            }
+        }
+        if (target is AutofillTarget.UnverifiedBrowser) TrustBrowserCard(target, onTrustBrowser)
+        when {
+            target is AutofillTarget.UnverifiedBrowser -> Hint("Xác nhận trình duyệt ở trên trước khi điền thẻ.")
+            !AutofillMatcher.cardAllowed(target) -> ErrorText("Trang này không mã hóa (http) hoặc không xác định được ứng dụng: không điền thẻ.")
+            cards.isEmpty() -> Hint("Chưa có thẻ nào trong vault. Thêm thẻ trong app Mật Khẩu (+ → Thẻ ngân hàng).")
+            else -> cards.forEach { e ->
+                ListItem(
+                    headlineContent = { Text(e.title) },
+                    supportingContent = { Text(com.samuelcruz.matkhau.core.card.PaymentCard.masked(e.card?.number.orEmpty()) + (e.card?.expiry?.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: "")) },
+                    modifier = Modifier.clickable { confirm = e }.sensitive(),
+                )
+            }
+        }
+    }
+    confirm?.let { e ->
+        AlertDialog(
+            onDismissRequest = { confirm = null },
+            title = { Text("Điền thẻ vào $label?") },
+            text = {
+                SensitiveWindow()
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Thẻ: ${e.title}")
+                    Text("Nơi nhận: $label ($detail)")
+                    if (target is AutofillTarget.App && !target.fromStore) {
+                        ErrorText("Ứng dụng này không được cài từ cửa hàng đã biết. Chỉ điền thẻ nếu bạn chắc chắn đây là app thật.")
+                    }
+                    if (target is AutofillTarget.Web && !AutofillMatcher.httpsConfirmed(target)) {
+                        ErrorText("Trình duyệt không cho biết trang có dùng HTTPS không. Chỉ điền nếu thanh địa chỉ có biểu tượng ổ khóa.")
+                    }
+                    Hint("Số thẻ, hết hạn và CVV sẽ được điền sau khi bạn xác thực.")
+                }
+            },
+            confirmButton = { TextButton(onClick = { confirm = null; if (!onFill(e)) vm.snackbar = "Không điền được thẻ này" }) { Text("Điền") } },
+            dismissButton = { TextButton(onClick = { confirm = null }) { Text("Hủy") } },
+        )
     }
 }
 

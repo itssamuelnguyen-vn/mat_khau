@@ -28,6 +28,10 @@ class MatKhauApp : Application() {
         private set
     lateinit var autoLock: AutoLockManager
         private set
+    lateinit var unlockLimiter: com.samuelcruz.matkhau.security.UnlockLimiter
+        private set
+    lateinit var autoBackup: com.samuelcruz.matkhau.security.AutoBackup
+        private set
     val biometric = BiometricKeyManager()
 
     /** Đăng nhập vừa gửi trên app / trang khác, chờ người dùng xác nhận lưu (tự động điền). Chỉ trong RAM. */
@@ -42,6 +46,17 @@ class MatKhauApp : Application() {
         settings = AppSettings(this)
         repository = VaultRepository(this)
         appScope.launch { repository.load() }   // đọc DB trên Dispatchers.IO, không chặn main thread
+        unlockLimiter = com.samuelcruz.matkhau.security.UnlockLimiter(this, settings)
+        autoBackup = com.samuelcruz.matkhau.security.AutoBackup(this, repository, settings, appScope)
+        // Mỗi thay đổi đã ghi: đếm "chưa backup" + hẹn tự backup (callback chạy trên luồng IO).
+        repository.onVaultChanged = { n ->
+            settings.addChanges(n)
+            appScope.launch { autoBackup.schedule() }
+        }
+        // Vừa mở khóa mà còn thay đổi chưa backup (lần trước vault khóa trước khi kịp ghi): ghi ngay.
+        appScope.launch {
+            repository.unlocked.collect { open -> if (open && settings.changesSinceBackup > 0) autoBackup.schedule(5_000) }
+        }
         autoLock = AutoLockManager(settings, isUnlocked = { repository.isUnlocked() }, lockNow = { clearClipboard -> lockNow(clearClipboard) })
         ProcessLifecycleOwner.get().lifecycle.addObserver(autoLock)
 

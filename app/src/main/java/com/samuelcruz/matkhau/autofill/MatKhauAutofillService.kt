@@ -60,6 +60,24 @@ class MatKhauAutofillService : AutofillService() {
             is AutofillTarget.App -> AppIdentity.label(this, t.packageName)
         }
 
+        if (screen.card != null) {
+            // Form thanh toán: chỉ đề xuất thẻ, không lưu gì. Trang http / app không rõ chứng chỉ: không đề xuất thẻ.
+            if (screen.target !is AutofillTarget.UnverifiedBrowser && !AutofillMatcher.cardAllowed(screen.target)) return null
+            if (app.repository.isUnlocked()) {
+                val offer = if (AutofillMatcher.cardAllowed(screen.target)) AutofillMatcher.cards(app.repository.entries.value) else emptyList()
+                offer.take(MAX_SUGGESTIONS).forEach { e ->
+                    val c = e.card ?: return@forEach
+                    builder.addDataset(
+                        authDataset(ids, presentation(e.title, "Thẻ ${com.samuelcruz.matkhau.core.card.PaymentCard.masked(c.number)}"), AutofillActivity.fillIntent(this, screen, e.id)),
+                    )
+                }
+                builder.addDataset(authDataset(ids, presentation("Chọn thẻ khác…", "Mật Khẩu"), AutofillActivity.pickIntent(this, screen)))
+            } else {
+                builder.addDataset(authDataset(ids, presentation("Mở khóa Mật Khẩu", "để điền thẻ vào $targetLabel"), AutofillActivity.pickIntent(this, screen)))
+            }
+            return builder.build()
+        }
+
         if (app.repository.isUnlocked()) {
             AutofillMatcher.matching(app.repository.entries.value, screen.target).take(MAX_SUGGESTIONS).forEach { e ->
                 builder.addDataset(

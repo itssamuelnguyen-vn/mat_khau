@@ -1,6 +1,7 @@
 package com.samuelcruz.matkhau.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -61,6 +62,16 @@ import com.samuelcruz.matkhau.ui.components.ErrorText
 import com.samuelcruz.matkhau.ui.components.FieldRow
 import com.samuelcruz.matkhau.ui.components.SectionTitle
 import kotlinx.coroutines.delay
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material3.OutlinedButton
+import com.samuelcruz.matkhau.core.card.PaymentCard
+import com.samuelcruz.matkhau.core.vault.Attachments
+import com.samuelcruz.matkhau.model.CardInfo
+import com.samuelcruz.matkhau.model.IdentityInfo
+import com.samuelcruz.matkhau.model.IdentityKinds
+import java.util.Calendar
 import java.text.DateFormat
 import java.util.Date
 
@@ -73,6 +84,10 @@ fun EntryDetailScreen(vm: VaultViewModel, id: String) {
     var confirmDelete by remember { mutableStateOf(false) }
     val guard = LocalSecretGuard.current
     var restoreCandidate by remember { mutableStateOf<PasswordHistoryItem?>(null) }
+    val activityContext = LocalContext.current
+    val attachLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        vm.addAttachment(activityContext, id, uri)
+    }
 
     if (entry == null) {
         AppScaffold(title = "Không tìm thấy", onBack = { vm.back() }) { Text("Mục này không còn tồn tại.") }
@@ -110,6 +125,9 @@ fun EntryDetailScreen(vm: VaultViewModel, id: String) {
             if (entry.totp.isNotBlank()) TotpCard(entry.totp) { code -> vm.copy(context, "mã 2FA", code) }
         }
 
+        entry.card?.takeIf { entry.type == EntryType.CARD }?.let { card -> CardSection(card) { label, value -> vm.copy(context, label, value) } }
+        entry.identity?.takeIf { entry.type == EntryType.IDENTITY }?.let { info -> IdentitySection(info) { label, value -> vm.copy(context, label, value) } }
+
         if (entry.notes.isNotBlank()) {
             SectionTitle(if (entry.type == EntryType.NOTE) "Nội dung" else "Ghi chú")
             FieldRow("Ghi chú", entry.notes, secret = entry.type == EntryType.NOTE, onCopy = { vm.copy(context, "ghi chú", entry.notes) })
@@ -132,6 +150,27 @@ fun EntryDetailScreen(vm: VaultViewModel, id: String) {
             entry.customFields.forEach { f ->
                 FieldRow(f.name.ifBlank { "(không tên)" }, f.value, secret = f.hidden, onCopy = { vm.copy(context, f.name, f.value) })
             }
+        }
+
+        SectionTitle(if (entry.attachments.isEmpty()) "File đính kèm" else "File đính kèm (${entry.attachments.size})")
+        entry.attachments.forEach { ref ->
+            ListItem(
+                headlineContent = { Text(ref.name) },
+                supportingContent = { Text("${formatSize(ref.size)} · ${ref.mimeType}") },
+                leadingContent = { Icon(Icons.Filled.AttachFile, null) },
+                // Mở file = lộ nội dung: qua cổng xác thực như khi bấm "hiện".
+                modifier = Modifier.sensitive().clickable { guard("Mở “${ref.name}”") { vm.navigate(Screen.Attachment(entry.id, ref.id)) } },
+            )
+        }
+        OutlinedButton(
+            onClick = { vm.suspendAutoLock(); attachLauncher.launch(arrayOf("*/*")) },
+            enabled = entry.attachments.size < Attachments.MAX_PER_ENTRY && vm.busyText == null,
+        ) {
+            Icon(Icons.Filled.AttachFile, null)
+            Text("  Thêm file")
+        }
+        if (entry.attachments.isEmpty()) {
+            Hint("Ảnh giấy tờ, file khóa, mã khôi phục… Tối đa ${Attachments.MAX_FILE_SIZE / (1024 * 1024)} MB mỗi file, ${Attachments.MAX_TOTAL_SIZE / (1024 * 1024)} MB tất cả. File được mã hóa trong vault và có trong backup.")
         }
 
         if (entry.type == EntryType.LOGIN && entry.passwordHistory.isNotEmpty()) {
@@ -250,4 +289,43 @@ fun TotpCard(secret: String, onCopy: (String) -> Unit) {
             )
         }
     }
+}
+
+/** Thẻ ngân hàng: thẻ thu gọn (hãng, 4 số cuối, hết hạn) + từng trường có nút hiện / copy. */
+@Composable
+private fun CardSection(card: CardInfo, onCopy: (String, String) -> Unit) {
+    val brand = PaymentCard.brand(card.number)
+    val expiry = PaymentCard.parseExpiry(card.expiry)
+    val now = Calendar.getInstance()
+    val expired = expiry?.isExpired(now.get(Calendar.YEAR), now.get(Calendar.MONTH) + 1) == true
+    Card(Modifier.fillMaxWidth().sensitive()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(brand.label, style = MaterialTheme.typography.labelLarge)
+            Text(PaymentCard.masked(card.number), fontFamily = FontFamily.Monospace, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Row {
+                Text(card.holder.ifBlank { " " }, modifier = Modifier.weight(1f))
+                if (card.expiry.isNotBlank()) Text(card.expiry, fontFamily = FontFamily.Monospace)
+            }
+        }
+    }
+    if (expired) ErrorText("⚠ Thẻ đã hết hạn")
+    FieldRow("Số thẻ", PaymentCard.format(card.number), secret = true, monospace = true, onCopy = { onCopy("số thẻ", card.number) })
+    FieldRow("Tên in trên thẻ", card.holder, onCopy = { onCopy("tên chủ thẻ", card.holder) })
+    FieldRow("Hết hạn", card.expiry, monospace = true, onCopy = { onCopy("ngày hết hạn", card.expiry) })
+    FieldRow("CVV / CVC", card.cvv, secret = true, monospace = true, onCopy = { onCopy("CVV", card.cvv) })
+    FieldRow("Mã PIN", card.pin, secret = true, monospace = true, onCopy = { onCopy("mã PIN", card.pin) })
+}
+
+@Composable
+private fun IdentitySection(info: IdentityInfo, onCopy: (String, String) -> Unit) {
+    FieldRow("Loại giấy tờ", IdentityKinds.label(info.kind))
+    FieldRow("Họ và tên", info.fullName, onCopy = { onCopy("họ tên", info.fullName) })
+    FieldRow("Số giấy tờ", info.number, secret = true, monospace = true, onCopy = { onCopy("số giấy tờ", info.number) })
+    FieldRow("Ngày sinh", info.dateOfBirth, onCopy = { onCopy("ngày sinh", info.dateOfBirth) })
+    FieldRow("Giới tính", info.gender)
+    FieldRow("Quốc tịch", info.nationality)
+    FieldRow("Ngày cấp", info.issueDate)
+    FieldRow("Có giá trị đến", info.expiryDate)
+    FieldRow("Nơi cấp", info.issuedBy, onCopy = { onCopy("nơi cấp", info.issuedBy) })
+    FieldRow("Địa chỉ", info.address, onCopy = { onCopy("địa chỉ", info.address) })
 }

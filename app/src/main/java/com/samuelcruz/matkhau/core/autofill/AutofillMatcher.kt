@@ -52,6 +52,25 @@ object AutofillMatcher {
         }
     }
 
+    /**
+     * Thẻ không gắn với một trang / app cụ thể (như trình duyệt vẫn làm), nhưng chỉ đề xuất cho: trang web trong trình
+     * duyệt đã xác nhận mà không phải http (không mã hóa), hoặc app đọc được chứng chỉ ký. Lần điền nào cũng hỏi vân tay
+     * và hiện rõ nơi nhận thẻ.
+     */
+    fun cardAllowed(target: AutofillTarget): Boolean = when (target) {
+        is AutofillTarget.Web -> !target.scheme.equals("http", ignoreCase = true)
+        is AutofillTarget.App -> target.certSha256 != null
+        is AutofillTarget.UnverifiedBrowser -> false
+    }
+
+    /** Trình duyệt báo rõ trang là https. null = không rõ (vài trình duyệt không báo): vẫn cho điền nhưng cảnh báo. */
+    fun httpsConfirmed(target: AutofillTarget): Boolean =
+        target is AutofillTarget.Web && target.scheme.equals("https", ignoreCase = true)
+
+    fun cards(entries: List<Entry>): List<Entry> =
+        entries.filter { it.type == EntryType.CARD && it.card?.number?.isNotEmpty() == true }
+            .sortedWith(compareByDescending<Entry> { it.favorite }.thenBy { it.title.lowercase() })
+
     fun matching(entries: List<Entry>, target: AutofillTarget): List<Entry> =
         entries.filter { matches(it, target) }.sortedWith(compareByDescending<Entry> { it.favorite }.thenBy { it.title.lowercase() })
 

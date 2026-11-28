@@ -180,6 +180,8 @@ fun SecretField(
     guarded: Boolean = false,
     imeAction: ImeAction = ImeAction.Done,
     monospace: Boolean = false,
+    /** NumberPassword cho số thẻ / CVV / PIN (bàn phím số, vẫn không học từ). */
+    keyboardType: KeyboardType = KeyboardType.Password,
     trailingExtra: @Composable () -> Unit = {},
 ) {
     var visible by remember { mutableStateOf(false) }
@@ -192,7 +194,7 @@ fun SecretField(
         singleLine = true,
         modifier = modifier.fillMaxWidth().sensitive(),
         visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = imeAction, autoCorrectEnabled = false),
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction, autoCorrectEnabled = false),
         textStyle = if (monospace) MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace) else MaterialTheme.typography.bodyLarge,
         trailingIcon = {
             Row {

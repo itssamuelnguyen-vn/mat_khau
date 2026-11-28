@@ -16,6 +16,8 @@ data class FormField(
     /** Tên resource id ("et_password"), gợi ý (hint) và nhãn — để đoán bằng chữ. */
     val texts: List<String> = emptyList(),
     val isTextField: Boolean = true,
+    /** Số ký tự tối đa (HTML maxlength / android:maxLength), null = không rõ. */
+    val maxLength: Int? = null,
 )
 
 /**
@@ -24,6 +26,26 @@ data class FormField(
  */
 data class LoginForm(val username: Int?, val passwords: List<Int>, val newPasswords: List<Int> = emptyList()) {
     val isEmpty: Boolean get() = username == null && passwords.isEmpty() && newPasswords.isEmpty()
+}
+
+/**
+ * Form thanh toán thẻ: chỉ có nghĩa khi tìm thấy ô số thẻ ([number]). Hết hạn có thể là một ô ([expiry], "MM/YY")
+ * hoặc hai ô tháng / năm.
+ */
+data class CardForm(
+    val number: Int?,
+    val holder: Int? = null,
+    val expiry: Int? = null,
+    val expMonth: Int? = null,
+    val expYear: Int? = null,
+    val cvc: Int? = null,
+    /** Cách viết hết hạn cho ô gộp: "MM/YY" (mặc định), "MM/YYYY" hoặc "MMYY". */
+    val expiryPattern: String = "MM/YY",
+    /** Ô năm riêng cần 4 chữ số. */
+    val fourDigitYear: Boolean = false,
+) {
+    val isEmpty: Boolean get() = number == null
+    val indices: List<Int> get() = listOfNotNull(number, holder, expiry, expMonth, expYear, cvc)
 }
 
 object FormClassifier {
@@ -52,8 +74,8 @@ object FormClassifier {
     /** Ô không phải đăng nhập: tìm kiếm, mã OTP / captcha, ... */
     private val IGNORE_WORDS = listOf("search", "tìm kiếm", "otp", "captcha", "verification code", "mã xác", "one-time", "promo", "coupon")
 
-    fun classify(fields: List<FormField>): LoginForm {
-        val candidates = fields.filter { it.isTextField && !isIgnored(it) }
+    fun classify(fields: List<FormField>, exclude: Collection<Int> = emptyList()): LoginForm {
+        val candidates = fields.filter { it.isTextField && !isIgnored(it) && it.index !in exclude }
         val allPasswords = candidates.filter { isPassword(it) }
         val newOnes = allPasswords.filter { isNewPassword(it) }.map { it.index }
         var current = allPasswords.map { it.index }.filterNot { it in newOnes }
@@ -67,6 +89,91 @@ object FormClassifier {
             username = candidates.lastOrNull { it.index < passwordIdx.min() && it.index !in passwordIdx }?.index
         }
         return LoginForm(username, current.take(2), new.take(2))
+    }
+
+    // ------------------------------------------------------------------ thẻ thanh toán
+
+    private val CARD_NUMBER_WORDS = listOf(
+        "card number", "cardnumber", "card_number", "card-number", "cc-number", "ccnumber", "cc_number", "cc number",
+        "creditcard", "credit card", "số thẻ", "sothe", "card no", "cardno", "pan",
+    )
+    private val CARD_HOLDER_WORDS = listOf(
+        "cardholder", "card holder", "card_holder", "name on card", "nameoncard", "cc-name", "ccname", "chủ thẻ", "chu the", "tên in trên thẻ",
+    )
+    private val CARD_EXPIRY_WORDS = listOf(
+        "expiry", "expiration", "exp date", "expdate", "exp-date", "exp_date", "mm/yy", "mm / yy", "mmyy", "valid thru",
+        "hết hạn", "het han", "cc-exp",
+    )
+    private val CARD_MONTH_WORDS = listOf("exp-month", "expmonth", "exp_month", "expiry month", "expiration month", "cc-exp-month", "tháng", "month", "mm")
+    private val CARD_YEAR_WORDS = listOf("exp-year", "expyear", "exp_year", "expiry year", "expiration year", "cc-exp-year", "năm", "year", "yy")
+    /** Ô số của thẻ KHÔNG phải thẻ thanh toán (CCCD, thẻ thư viện, bảo hiểm, thành viên...). */
+    private val NOT_PAYMENT_WORDS = listOf(
+        "căn cước", "can cuoc", "cccd", "cmnd", "chứng minh", "thư viện", "thu vien", "library", "bảo hiểm", "bao hiem",
+        "insurance", "thành viên", "thanh vien", "member", "sinh viên", "sinh vien", "student", "id card", "identity", "loyalty",
+    )
+    private val COMBINED_EXPIRY = listOf("mm/yy", "mm / yy", "mmyy", "mm-yy", "mm/aa", "tháng/năm")
+    private val CARD_CVC_WORDS = listOf("cvv", "cvc", "cvn", "csc", "cid", "security code", "securitycode", "card code", "mã bảo mật", "ma bao mat", "cc-csc")
+
+    /**
+     * Tìm các ô thẻ. Ưu tiên gợi ý chuẩn (autofillHints của Android, autocomplete="cc-*" của HTML), rồi mới đoán theo
+     * tên / nhãn. Tháng / năm chỉ được đoán theo chữ khi form đã có ô số thẻ (chữ "tháng", "năm" quá chung chung).
+     */
+    fun classifyCard(fields: List<FormField>): CardForm {
+        val candidates = fields.filter { it.isTextField && it.htmlType !in setOf("hidden", "submit", "button", "checkbox", "radio", "search") }
+        val taken = HashSet<Int>()
+        fun hinted(vararg hints: String) = candidates.firstOrNull { f -> f.index !in taken && f.hints.any { h -> hints.any { h == it } } }?.index
+        fun texts(f: FormField) = (f.htmlAttrs + f.texts).map { it.lowercase() }
+        fun has(f: FormField, words: List<String>) = texts(f).any { t -> words.any { w -> matchesWord(t, w) } }
+        // "dd/mm/yyyy" là ô ngày (sinh, cấp...), không phải hạn thẻ.
+        fun combined(f: FormField) = texts(f).any { t -> !t.contains("dd") && COMBINED_EXPIRY.any { t.contains(it) } }
+        fun dateField(f: FormField) = texts(f).any { it.contains("dd") }
+        fun worded(predicate: (FormField) -> Boolean) = candidates.firstOrNull { f -> f.index !in taken && predicate(f) }?.index
+        fun pick(i: Int?) = i?.also { taken += it }
+
+        val numberByHint = pick(hinted("creditcardnumber", "cc-number"))
+        val number = numberByHint ?: pick(worded { has(it, CARD_NUMBER_WORDS) && !has(it, NOT_PAYMENT_WORDS) }) ?: return CardForm(number = null)
+        val cvc = pick(hinted("creditcardsecuritycode", "cc-csc")) ?: pick(worded { has(it, CARD_CVC_WORDS) })
+        // Ô tháng / năm riêng trước, rồi mới tới ô gộp: "Expiration month" không bị coi là ô "MM/YY".
+        var month = pick(hinted("creditcardexpirationmonth", "cc-exp-month"))
+        var year = pick(hinted("creditcardexpirationyear", "cc-exp-year"))
+        val expiryByHint = pick(hinted("creditcardexpirationdate", "cc-exp"))
+        var expiryByPattern = false
+        val expiry = expiryByHint ?: if (month == null && year == null) {
+            pick(worded { f ->
+                !dateField(f) && (combined(f) || (has(f, CARD_EXPIRY_WORDS) && !has(f, CARD_MONTH_WORDS) && !has(f, CARD_YEAR_WORDS)))
+            })?.also { i -> expiryByPattern = fields.first { it.index == i }.let(::combined) }
+        } else null
+        if (expiry == null) {
+            if (month == null) month = pick(worded { !combined(it) && !dateField(it) && has(it, CARD_MONTH_WORDS) })
+            if (year == null) year = pick(worded { !combined(it) && !dateField(it) && has(it, CARD_YEAR_WORDS) })
+        }
+        val holder = pick(hinted("cc-name", "creditcardholdername")) ?: pick(worded { has(it, CARD_HOLDER_WORDS) })
+
+        // Chỉ đoán theo chữ (không có gợi ý chuẩn): phải có thêm ô CVV hoặc hết hạn mới là form thẻ, để "Số thẻ thư
+        // viện", "ID card number" của form đăng nhập không bị cướp mất.
+        // Tháng / chữ "hết hạn" đoán theo chữ chưa đủ: cần CVV, hoặc ô hết hạn có gợi ý chuẩn / mẫu "MM/YY".
+        if (numberByHint == null && cvc == null && expiryByHint == null && !expiryByPattern) return CardForm(number = null)
+
+        val expiryField = expiry?.let { i -> fields.first { it.index == i } }
+        // Theo chữ hiện trên ô trước ("MM / YY" dù maxlength 7), độ dài tối đa chỉ dùng khi ô không có chữ gợi ý.
+        val expiryText = expiryField?.let { words(it) }.orEmpty()
+        val pattern = when {
+            expiryField == null -> "MM/YY"
+            expiryText.any { it.contains("yyyy") } -> "MM/YYYY"
+            expiryText.any { it.contains("yy") || it.contains("/aa") } -> if (expiryField.maxLength == 4) "MMYY" else "MM/YY"
+            expiryField.maxLength == 4 -> "MMYY"
+            (expiryField.maxLength ?: 0) >= 7 -> "MM/YYYY"
+            else -> "MM/YY"
+        }
+        val yearField = year?.let { i -> fields.first { it.index == i } }
+        val fourDigitYear = yearField != null && (yearField.maxLength == 4 || words(yearField).any { it.contains("yyyy") })
+        return CardForm(number, holder, expiry, month, year, cvc, pattern, fourDigitYear)
+    }
+
+    /** "pan", "mm", "yy", "cid" ngắn: chỉ khớp nguyên từ, không khớp một phần ("company", "summary"). */
+    private fun matchesWord(text: String, word: String): Boolean {
+        if (word.length > 3) return text.contains(word)
+        return text.split(' ', '-', '_', '/', '.', ':', '[', ']', '(', ')').any { it == word }
     }
 
     private fun isNewPassword(f: FormField): Boolean =

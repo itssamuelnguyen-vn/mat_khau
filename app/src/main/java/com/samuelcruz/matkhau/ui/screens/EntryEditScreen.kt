@@ -40,6 +40,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
 import com.samuelcruz.matkhau.core.totp.Totp
+import com.samuelcruz.matkhau.core.card.PaymentCard
+import com.samuelcruz.matkhau.model.CardInfo
+import com.samuelcruz.matkhau.model.IdentityInfo
+import com.samuelcruz.matkhau.model.IdentityKinds
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import com.samuelcruz.matkhau.model.Categories
 import com.samuelcruz.matkhau.model.CustomField
 import com.samuelcruz.matkhau.model.Entry
@@ -74,6 +79,25 @@ fun EntryEditScreen(vm: VaultViewModel, id: String?, initialType: EntryType) {
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var category by remember { mutableStateOf(existing?.category ?: Categories.PERSONAL) }
     var tagsText by remember { mutableStateOf(existing?.tags?.joinToString(", ") ?: "") }
+    // Thẻ ngân hàng
+    val oldCard = existing?.card
+    var cardHolder by remember { mutableStateOf(oldCard?.holder ?: "") }
+    var cardNumber by remember { mutableStateOf(oldCard?.number ?: "") }
+    var cardExpiry by remember { mutableStateOf(oldCard?.expiry ?: "") }
+    var cardCvv by remember { mutableStateOf(oldCard?.cvv ?: "") }
+    var cardPin by remember { mutableStateOf(oldCard?.pin ?: "") }
+    // Giấy tờ tùy thân
+    val oldId = existing?.identity
+    var idKind by remember { mutableStateOf(oldId?.kind ?: IdentityKinds.CCCD) }
+    var idName by remember { mutableStateOf(oldId?.fullName ?: "") }
+    var idNumber by remember { mutableStateOf(oldId?.number ?: "") }
+    var idBirth by remember { mutableStateOf(oldId?.dateOfBirth ?: "") }
+    var idGender by remember { mutableStateOf(oldId?.gender ?: "") }
+    var idNationality by remember { mutableStateOf(oldId?.nationality ?: "") }
+    var idIssued by remember { mutableStateOf(oldId?.issueDate ?: "") }
+    var idExpiry by remember { mutableStateOf(oldId?.expiryDate ?: "") }
+    var idIssuedBy by remember { mutableStateOf(oldId?.issuedBy ?: "") }
+    var idAddress by remember { mutableStateOf(oldId?.address ?: "") }
     val fields = remember {
         mutableStateListOf<FieldDraft>().apply {
             existing?.customFields?.forEach { add(FieldDraft(it.name, it.value, it.hidden)) }
@@ -122,15 +146,34 @@ fun EntryEditScreen(vm: VaultViewModel, id: String?, initialType: EntryType) {
         return
     }
 
-    val totpInvalid = totp.isNotBlank() && !Totp.isValid(totp)
-    val canSave = title.isNotBlank() && !totpInvalid && vm.busyText == null
+    val totpInvalid = type == EntryType.LOGIN && totp.isNotBlank() && !Totp.isValid(totp)
+    val expiryInvalid = type == EntryType.CARD && cardExpiry.isNotBlank() && PaymentCard.parseExpiry(cardExpiry) == null
+    // Thẻ / giấy tờ không bắt buộc đặt tên: tự đặt theo hãng thẻ + 4 số cuối, hoặc loại giấy tờ + họ tên.
+    val autoTitle = when (type) {
+        EntryType.CARD -> PaymentCard.digits(cardNumber).takeIf { it.length >= 4 }?.let { "${PaymentCard.brand(it).label} ${PaymentCard.masked(it)}" }
+        EntryType.IDENTITY -> idName.trim().takeIf { it.isNotEmpty() }?.let { "${IdentityKinds.label(idKind)} – $it" }
+        else -> null
+    }
+    val canSave = (title.isNotBlank() || autoTitle != null) && !totpInvalid && !expiryInvalid && vm.busyText == null
 
     fun save() {
         val tags = tagsText.split(',', ' ', '#').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
         val draft = Entry(
             id = existing?.id ?: "",
             type = type,
-            title = title.trim(),
+            title = title.trim().ifEmpty { autoTitle.orEmpty() },
+            card = if (type == EntryType.CARD) CardInfo(
+                holder = cardHolder.trim(),
+                number = PaymentCard.digits(cardNumber),
+                expiry = PaymentCard.parseExpiry(cardExpiry)?.mmyy ?: "",
+                cvv = cardCvv.trim(),
+                pin = cardPin.trim(),
+            ) else null,
+            identity = if (type == EntryType.IDENTITY) IdentityInfo(
+                kind = idKind, fullName = idName.trim(), number = idNumber.trim(), dateOfBirth = idBirth.trim(),
+                gender = idGender.trim(), nationality = idNationality.trim(), issueDate = idIssued.trim(),
+                expiryDate = idExpiry.trim(), issuedBy = idIssuedBy.trim(), address = idAddress.trim(),
+            ) else null,
             username = if (type == EntryType.LOGIN) username.trim() else "",
             password = if (type == EntryType.LOGIN) password else "",
             url = if (type == EntryType.LOGIN) url.trim() else "",
@@ -153,12 +196,60 @@ fun EntryEditScreen(vm: VaultViewModel, id: String?, initialType: EntryType) {
             IconButton(onClick = { save() }, enabled = canSave) { Icon(Icons.Filled.Check, "Lưu") }
         },
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
             FilterChip(selected = type == EntryType.LOGIN, onClick = { type = EntryType.LOGIN }, label = { Text("Đăng nhập") })
             FilterChip(selected = type == EntryType.NOTE, onClick = { type = EntryType.NOTE }, label = { Text("Ghi chú bảo mật") })
+            FilterChip(selected = type == EntryType.CARD, onClick = { type = EntryType.CARD }, label = { Text("Thẻ") })
+            FilterChip(selected = type == EntryType.IDENTITY, onClick = { type = EntryType.IDENTITY }, label = { Text("Giấy tờ") })
         }
 
-        TrackedTextField(title, { title = it }, label = { Text("Tên *") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        TrackedTextField(
+            title, { title = it },
+            label = { Text(if (autoTitle != null || type == EntryType.CARD || type == EntryType.IDENTITY) "Tên (để trống: tự đặt)" else "Tên *") },
+            placeholder = if (autoTitle != null) ({ Text(autoTitle) }) else null,
+            singleLine = true, modifier = Modifier.fillMaxWidth(),
+        )
+
+        if (type == EntryType.CARD) {
+            TrackedTextField(
+                cardHolder, { cardHolder = it }, label = { Text("Tên in trên thẻ") }, singleLine = true,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, autoCorrectEnabled = false),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            SecretField(cardNumber, { cardNumber = it.filter { c -> c.isDigit() || c == ' ' }.take(23) }, "Số thẻ", monospace = true, guarded = true, keyboardType = KeyboardType.NumberPassword)
+            val digits = PaymentCard.digits(cardNumber)
+            if (digits.length >= 6) {
+                if (PaymentCard.looksValid(digits)) Hint("${PaymentCard.brand(digits).label} ${PaymentCard.masked(digits)}")
+                else ErrorText("Số thẻ có vẻ bị gõ sai (kiểm tra lại từng chữ số)")
+            }
+            TrackedTextField(
+                cardExpiry, { cardExpiry = it.take(7) }, label = { Text("Hết hạn (MM/YY)") }, singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (expiryInvalid) ErrorText("Nhập tháng / năm, ví dụ 08/29")
+            SecretField(cardCvv, { cardCvv = it.filter(Char::isDigit).take(4) }, "CVV / CVC", monospace = true, guarded = true, keyboardType = KeyboardType.NumberPassword)
+            SecretField(cardPin, { cardPin = it.filter(Char::isDigit).take(12) }, "Mã PIN", monospace = true, guarded = true, keyboardType = KeyboardType.NumberPassword)
+            Hint("Tự động điền thẻ vào trang thanh toán luôn hỏi vân tay trước.")
+        }
+
+        if (type == EntryType.IDENTITY) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                IdentityKinds.all.forEach { k ->
+                    FilterChip(selected = idKind == k, onClick = { idKind = k }, label = { Text(IdentityKinds.label(k)) })
+                }
+            }
+            TrackedTextField(idName, { idName = it }, label = { Text("Họ và tên") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            SecretField(idNumber, { idNumber = it }, "Số giấy tờ", monospace = true, guarded = true)
+            TrackedTextField(idBirth, { idBirth = it }, label = { Text("Ngày sinh (dd/mm/yyyy)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            TrackedTextField(idGender, { idGender = it }, label = { Text("Giới tính") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            TrackedTextField(idNationality, { idNationality = it }, label = { Text("Quốc tịch") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            TrackedTextField(idIssued, { idIssued = it }, label = { Text("Ngày cấp") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            TrackedTextField(idExpiry, { idExpiry = it }, label = { Text("Có giá trị đến") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            TrackedTextField(idIssuedBy, { idIssuedBy = it }, label = { Text("Nơi cấp") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            TrackedTextField(idAddress, { idAddress = it }, label = { Text("Nơi thường trú / địa chỉ") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+            Hint("Có thể đính kèm ảnh chụp giấy tờ ở màn chi tiết sau khi lưu.")
+        }
 
         if (type == EntryType.LOGIN) {
             TrackedTextField(

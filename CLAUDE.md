@@ -37,8 +37,12 @@ LockActivity  no-UI panic lock behind the launcher shortcut "Khóa ngay" (res/xm
 core/         pure Kotlin, no Android, JVM-tested
   crypto/     Aead (AES-256-GCM, random 12-byte nonce), Argon2id (Bouncy Castle) + KdfParams limits, Bytes
   format/     Base32 (RFC 4648), ByteWriter / ByteReader (bounds-checked big-endian)
-  vault/      VaultHeader (key slots), VaultCrypto (key hierarchy), BackupFormat (.lvbackup), RecoveryKey
-  totp/       Totp (RFC 6238, otpauth:// parsing)
+  vault/      VaultHeader (key slots), VaultCrypto (key hierarchy), BackupFormat (.lvbackup v1 / v2), RecoveryKey,
+              Attachments (chunked encrypted files), UnlockThrottle (wrong-password delays)
+  totp/       Totp (RFC 6238, otpauth:// parsing), OtpMigration (Google Authenticator otpauth-migration:// QR,
+              hand-written protobuf reader)
+  card/       PaymentCard (brand by BIN, Luhn except Napas, format / mask, MM/YY expiry)
+  backup/     BackupReminder (when to nag: never backed up, 30 days, > 10 changes; 7-day snooze)
   generator/  PasswordGenerator (SecureRandom, BIP39 passphrases), StrengthEstimator (zxcvbn-like: common /
               leet passwords, keyboard runs, sequences, repeats, years, dates → bits + Vietnamese warnings)
   health/     PasswordHealth (weak, reused, older than 1 year, missing 2FA / URL, score)
@@ -52,8 +56,10 @@ autofill/     MatKhauAutofillService, AutofillActivity (+ AutofillUi: unlock, pi
   qr/         QrDecoder (ZXing on a luminance frame)
 data/         VaultDatabase (SQLiteOpenHelper: meta + items), VaultRepository (session, CRUD, backup; Dispatchers.IO)
 model/        Entry (serialized to JSON then encrypted as a whole; favorite, passwordUpdatedAt, passwordHistory
-              ≤ 20 via withPassword), BackupPayload, Categories. New fields need defaults (old items / backups)
+              ≤ 20 via withPassword; 0.5.0: types CARD / IDENTITY with CardInfo / IdentityInfo, attachments
+              = AttachmentRef list), BackupPayload, Categories. New fields need defaults (old items / backups)
 security/     AutoLockManager, BiometricKeyManager (Keystore key) + BiometricPrompter, SecureClipboard,
+              VaultClipboard (Compose LocalClipboard → SecureClipboard), UnlockLimiter, AutoBackup (SAF tree),
               PanicLockTileService (Quick Settings tile "Khóa Mật Khẩu"),
               SecurityAudit (real runtime checks), AppSettings (non-sensitive prefs only)
 ui/           VaultViewModel (screen stack + all actions), AppRoot (router), screens/, components/, theme/
@@ -78,15 +84,27 @@ ui/           VaultViewModel (screen stack + all actions), AppRoot (router), scr
 - **Storage:** `vault.db`, `PRAGMA secure_delete=ON`, exactly two tables, no plaintext column:
   `meta(k TEXT PK, v BLOB)` (`vault_header`, `biometric_wrapped_vek`) and `items(id TEXT PK, fmt INT, nonce BLOB,
   ct BLOB)`. Every DB call is a suspend function on `Dispatchers.IO`; create and restore replace the vault in one
-  transaction (`VaultDatabase.replaceVault`).
+  transaction (`VaultDatabase.replaceVault`). `fmt` 1 = an entry; `fmt` 2 = one chunk of an attachment.
+- **Attachments (0.5.0):** no extra table. A file is cut into 512 KiB chunks (CursorWindow is ~2 MB), each sealed
+  with the VEK, AAD = `"localvault/attachment/v1" + vaultId + u32 index + u32 count + attachmentId`, stored as
+  `items` row `att:<attachmentId>:<index>`, fmt 2. Name, MIME, size, chunk count and SHA-256 live in the encrypted
+  `Entry.attachments`; opening checks every chunk + size + SHA-256. Limits: 10 MB per file, 40 MB in total, 20 per
+  entry. Add / delete attachment and delete entry write the entry and its chunks in one transaction; unlock skips
+  fmt-2 rows (`entryItems`) and deletes orphan chunks only when every entry decrypted. Viewing (images, text) is
+  in-app; anything else is exported unencrypted after a warning.
 - **Binary formats** (big-endian, "bytes" = u32 length + data). Any change must bump the version and keep reading
   the old one.
   - Header: `"LVHD" | u16 1 | bytes vaultId(16) | u8 kdf=1 | u32 memKiB | u32 iter | u8 par | slotMK | u8 hasRecovery
     | [slotRecovery]`; slot = `bytes salt(16) | bytes nonce(12) | bytes ct(48)`; slot AAD =
     `"localvault/key-slot/v1" + type (1 password, 2 recovery) + vaultId`.
-  - Backup `.lvbackup`: `"LVBK" | u16 1 | header (both slots) | bytes nonce | bytes ct`; AAD =
-    `"localvault/backup/v1" + every byte before the nonce`; plaintext = JSON `BackupPayload`; max 64 MB. Opens with
-    the master password **or** the Recovery Key valid when it was exported, never depends on the Keystore.
+  - Backup `.lvbackup` v2 (0.5.0): `"LVBK" | u16 2 | header (both slots) | bytes nonce | bytes ct | u32 n |
+    n × (bytes rowId | bytes nonce | bytes ct)`; AAD of the entry block = `"localvault/backup/v1" + every byte before
+    the nonce`; plaintext = JSON `BackupPayload`. The trailing rows are the attachment chunks copied verbatim from
+    the DB (already sealed with the VEK and bound to vault / file / position); restore requires exactly the rows the
+    entries reference, each decrypting and matching its SHA-256, else it is treated as tampering. Written streaming
+    (`BackupFormat.write`), max 96 MB; attachments that fail verification at export are left out and reported.
+    v1 (`u16 1`, no row section) is still read. Opens with the master password **or** the Recovery Key valid when it
+    was exported, never depends on the Keystore. Restoring keeps the backup's VEK / vaultId, so chunks stay valid.
   - Recovery Key: 20 random bytes → Base32 without padding → 8 groups of 4. Parsing drops non-alphanumerics,
     upper-cases, maps 0→O, 1→I, 8→B.
   - Biometric blob: `u8 2 | bytes iv | bytes ct` (v1 from 0.1.0 had no AAD and is rejected: re-enable), GCM AAD = `"localvault/biometric/v1" + vaultId` (a blob from
@@ -111,7 +129,16 @@ ui/           VaultViewModel (screen stack + all actions), AppRoot (router), scr
   reset, clipboard cleared if we copied something, except when locking because the app went to the background
   (the user is probably pasting elsewhere; the clipboard timer still clears it).
 - **Clipboard:** cleared after 10/30/60/120 s (default 30), marked IS_SENSITIVE; not cleared when we can see it now
-  holds something else the user copied.
+  holds something else the user copied. Text-field "Copy" / "Cut" (selection toolbar, Ctrl+C) also goes through it:
+  `AppRoot` and `AutofillFrame` provide `VaultClipboard` as Compose `LocalClipboard` (paste is untouched).
+- **Wrong password throttle (0.5.0):** master password and Recovery Key share one counter (`UnlockLimiter`,
+  `AppSettings.unlockFailures`, written with `commit()`): 4 free tries, then 30 s, 1, 5, 15, 30 min. Measured with
+  `elapsedRealtime` + `Settings.Global.BOOT_COUNT`: a reboot restarts the full wait instead of clearing it. Biometric
+  unlock is not counted. Never wipes the vault.
+- **Backups (0.5.0):** `AppSettings.lastBackupAt` + `changesSinceBackup` (bumped by `VaultRepository.onVaultChanged`)
+  drive the reminder banner. Optional auto-backup: a SAF tree with a persisted permission; ~20 s after the last change
+  (or 5 s after an unlock with pending changes) while unlocked, writes `matkhau-auto-<stamp>.lvbackup` (the same
+  encrypted format), keeps the 5 newest of its own files. Errors show in the banner and Settings.
 - **Inactivity:** `Activity.onUserInteraction` misses soft-keyboard text and dialog touches, so text fields
   (`TrackedTextField`, `SecretField`) and dialog content (`Modifier.trackUserActivity`) report activity through
   `LocalUserActivity`. Messages to the user go through `vm.snackbar = "…"` (a queue, not state).
@@ -136,6 +163,24 @@ ui/           VaultViewModel (screen stack + all actions), AppRoot (router), scr
   - App: only entries the user linked to that package **and** signing cert (`Entry.linkedApps`; cert rotation history
     accepted). Name-based suggestions only for apps installed from a known store; sideloaded apps get a warning.
   - Forms: current vs new password fields are told apart; fill goes to current, save prefers the new value.
+  - Cards (0.5.0): `FormClassifier.classifyCard` (Android hints, `cc-*` autocomplete, Vietnamese / English labels)
+    takes the card fields out of login classification. Cards are not bound to a site: offered only on a confirmed
+    browser page that is not `http`, or an app with a readable cert (`AutofillMatcher.cardAllowed`). A card never
+    takes the fill fast path: `CardPick` always confirms the receiver (host / app, non-store warning, "HTTPS not
+    reported" warning when the scheme is null), then `SecretGuard` is forced (biometric) even with the option off;
+    no device auth at all = no card fill. Word-only card detection needs a CVV or expiry field too, so login forms
+    with "số thẻ thư viện" stay logins. Never saved from forms.
+  - Attachments are owned by the repository: `save()` / `importEntries()` ignore the caller's `attachments` and keep
+    the stored list (stale snapshots from autofill / edit screens cannot drop or resurrect files). Large writes use
+    `commitTx` (transaction outside the session monitor, generation checked at the end, RAM state updated only after
+    COMMIT) so `lock()` never waits; CSV / 2FA imports use it too.
+  - Auto-backup pruning always keeps the file it just wrote and the newest *complete* one
+    (`AppSettings.autoBackupLastCompleteDoc`), so degraded exports (corrupted entries, skipped attachments) never
+    push the last full backup out; a restore during the run (`VaultRepository.restoreCount`) means the file is not
+    counted. An export aborts (`VaultLockedException`, partial file deleted) when the vault locks mid-write, so no
+    VEK copy outlives the lock. Unlock-time orphan cleanup only runs if `writeMutex` is free (`tryLock`). Wrong
+    password attempts are counted *before* Argon2id (`UnlockLimiter.tryBegin`); a non-password error restores the
+    exact previous counter state (`cancel`).
   - Save: credentials stay in RAM (`MatKhauApp.pendingAutofillSave`, 10 min expiry, nonce-bound to its intent,
     cleared on lock (the save screen closes) or when that save screen closes), never in an Intent; username is
     editable (two-step logins).
@@ -148,7 +193,7 @@ ui/           VaultViewModel (screen stack + all actions), AppRoot (router), scr
   enabled service that is not a system app, or not (from a known store AND declared tool), counts as risky; the
   Security + Unlock screens list them with package names, and while any exists `SecretGuard` is enforced even if the
   option is off. Dialogs are separate windows: their content calls `SensitiveWindow()`. Also warns on a non-system
-  keyboard. Known gap: text-field selection "Copy" of a revealed value bypasses SecureClipboard.
+  keyboard. (The 0.4.0 gap, selection-toolbar "Copy" bypassing SecureClipboard, is closed by `VaultClipboard`.)
   Optional `AppSettings.requireAuthForSecrets`: `SecretGuard` asks for biometric (device credential only when no
   biometric is enrolled) before reveal, copy of a secret, opening Edit, un-hiding a field, or an autofill fill (30 s
   grace, reset on lock, action dropped if the vault locked during the prompt; switching it off always prompts). Components get
@@ -166,5 +211,6 @@ keyboard / OEM clipboard manager could change.
 ## Next
 
 Done from Phase 2 / 3: password history, favourites, password health, panic lock (tile + shortcut), CSV import,
-Autofill with phishing protection. Not planned: decoy vault, hardware FIDO2 keys (no platform API), passkeys /
+Autofill with phishing protection, anti accessibility-trojan layers, backup reminder + auto-backup, Google
+Authenticator import, cards / identities (+ card autofill), encrypted attachments, wrong-password throttle. Not planned: decoy vault, hardware FIDO2 keys (no platform API), passkeys /
 multiple vaults unless asked; inline (keyboard) autofill suggestions could come later.

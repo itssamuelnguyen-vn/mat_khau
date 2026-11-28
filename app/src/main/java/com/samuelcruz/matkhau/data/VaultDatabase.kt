@@ -14,6 +14,8 @@ class StoredItem(val id: String, val format: Int, val nonce: ByteArray, val ciph
  *
  * Bảng meta:  k (TEXT) -> v (BLOB)   — header vault, VEK bọc bởi Keystore (vân tay)
  * Bảng items: id, fmt, nonce, ct     — KHÔNG có cột plaintext nào
+ *   fmt = 1: một mục (Entry JSON đã mã hóa)
+ *   fmt = 2: một đoạn file đính kèm (xem core.vault.Attachments); vẫn đúng 2 bảng, không đổi schema.
  */
 class VaultDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
 
@@ -71,12 +73,50 @@ class VaultDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
         writableDatabase.delete("meta", "k = ?", arrayOf(key))
     }
 
-    fun allItems(): List<StoredItem> =
-        readableDatabase.rawQuery("SELECT id, fmt, nonce, ct FROM items", null).use { c ->
+    /**
+     * Mọi dòng TRỪ các đoạn file đính kèm (không nạp vài chục MB file vào RAM lúc mở khóa). Dòng có fmt lạ vẫn được
+     * trả về để bị đếm là hỏng.
+     */
+    fun entryItems(): List<StoredItem> =
+        readableDatabase.rawQuery("SELECT id, fmt, nonce, ct FROM items WHERE fmt != ?", arrayOf(ATTACHMENT_FORMAT.toString())).use { c ->
             buildList {
                 while (c.moveToNext()) add(StoredItem(c.getString(0), c.getInt(1), c.getBlob(2), c.getBlob(3)))
             }
         }
+
+    /** id của mọi đoạn file đính kèm (không đọc nội dung). */
+    fun attachmentRowIds(): Set<String> =
+        readableDatabase.rawQuery("SELECT id FROM items WHERE fmt = ?", arrayOf(ATTACHMENT_FORMAT.toString())).use { c ->
+            buildSet { while (c.moveToNext()) add(c.getString(0)) }
+        }
+
+    /** Một dòng (mỗi đoạn ≤ 512 KB nên luôn vừa CursorWindow). */
+    fun getItem(id: String): StoredItem? =
+        readableDatabase.rawQuery("SELECT id, fmt, nonce, ct FROM items WHERE id = ?", arrayOf(id)).use { c ->
+            if (c.moveToFirst()) StoredItem(c.getString(0), c.getInt(1), c.getBlob(2), c.getBlob(3)) else null
+        }
+
+    /** Chạy [block] trong MỘT transaction: hoặc ghi hết, hoặc không ghi gì. */
+    fun <T> inTransaction(block: () -> T): T {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val result = block()
+            db.setTransactionSuccessful()
+            return result
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun insertItem(item: StoredItem) {
+        writableDatabase.insertOrThrow("items", null, item.toValues())
+    }
+
+    fun deleteItems(ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        inTransaction { ids.forEach { writableDatabase.delete("items", "id = ?", arrayOf(it)) } }
+    }
 
     fun upsertItem(item: StoredItem) {
         writableDatabase.insertWithOnConflict("items", null, item.toValues(), SQLiteDatabase.CONFLICT_REPLACE)
@@ -99,7 +139,7 @@ class VaultDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
     }
 
     /** Thay toàn bộ vault trong một transaction (dùng khi khôi phục backup): hoặc thành công hết, hoặc không đổi gì. */
-    fun replaceVault(meta: Map<String, ByteArray>, items: List<StoredItem>) {
+    fun replaceVault(meta: Map<String, ByteArray>, items: Sequence<StoredItem>) {
         val db = writableDatabase
         db.beginTransaction()
         try {
@@ -123,5 +163,6 @@ class VaultDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
     companion object {
         const val DB_NAME = "vault.db"
         const val DB_VERSION = 1
+        const val ATTACHMENT_FORMAT = 2
     }
 }

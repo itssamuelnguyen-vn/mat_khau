@@ -3,7 +3,68 @@ package com.samuelcruz.matkhau.model
 import kotlinx.serialization.Serializable
 
 @Serializable
-enum class EntryType { LOGIN, NOTE }
+enum class EntryType { LOGIN, NOTE, CARD, IDENTITY }
+
+/** Thẻ ngân hàng (0.5.0). Số thẻ chỉ giữ chữ số; hết hạn dạng "MM/YY". */
+@Serializable
+data class CardInfo(
+    val holder: String = "",
+    val number: String = "",
+    val expiry: String = "",
+    val cvv: String = "",
+    val pin: String = "",
+) {
+    override fun toString(): String = "CardInfo()"
+}
+
+/** Giấy tờ tùy thân (0.5.0): CCCD, hộ chiếu, bằng lái... Ngày lưu dạng chữ người dùng gõ (dd/mm/yyyy). */
+@Serializable
+data class IdentityInfo(
+    val kind: String = IdentityKinds.CCCD,
+    val fullName: String = "",
+    val number: String = "",
+    val dateOfBirth: String = "",
+    val gender: String = "",
+    val nationality: String = "",
+    val issueDate: String = "",
+    val expiryDate: String = "",
+    val issuedBy: String = "",
+    val address: String = "",
+) {
+    override fun toString(): String = "IdentityInfo(kind=$kind)"
+}
+
+object IdentityKinds {
+    const val CCCD = "cccd"
+    const val PASSPORT = "passport"
+    const val DRIVER = "driver"
+    const val OTHER = "other"
+    val all = listOf(CCCD, PASSPORT, DRIVER, OTHER)
+
+    fun label(id: String): String = when (id) {
+        CCCD -> "CCCD / CMND"
+        PASSPORT -> "Hộ chiếu"
+        DRIVER -> "Bằng lái xe"
+        else -> "Giấy tờ khác"
+    }
+}
+
+/**
+ * File đính kèm (0.5.0). Nội dung nằm ở các dòng fmt=2 của bảng items (xem core.vault.Attachments); ở đây chỉ có
+ * thông tin mô tả + SHA-256 để kiểm tra toàn vẹn. Tất cả nằm trong mục đã mã hóa.
+ */
+@Serializable
+data class AttachmentRef(
+    val id: String,
+    val name: String,
+    val mimeType: String = "application/octet-stream",
+    val size: Long,
+    val chunks: Int,
+    val sha256: String,
+    val addedAt: Long = 0L,
+) {
+    override fun toString(): String = "AttachmentRef(id=$id)"
+}
 
 @Serializable
 data class CustomField(
@@ -61,6 +122,10 @@ data class Entry(
     val passwordHistory: List<PasswordHistoryItem> = emptyList(),
     /** Thêm ở 0.3.0: app được phép tự động điền mục này (người dùng liên kết khi chọn mục lần đầu). */
     val linkedApps: List<LinkedApp> = emptyList(),
+    // Thêm ở 0.5.0.
+    val card: CardInfo? = null,
+    val identity: IdentityInfo? = null,
+    val attachments: List<AttachmentRef> = emptyList(),
 ) {
     /** data class tự sinh toString() in cả mật khẩu/TOTP/ghi chú: ghi đè để không bao giờ lộ qua log hay lỗi. */
     override fun toString(): String = "Entry(id=$id, type=$type)"

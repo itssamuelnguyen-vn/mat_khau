@@ -1,4 +1,4 @@
-# Mật Khẩu 0.4.0: checklist thử trên điện thoại
+# Mật Khẩu 0.5.0: checklist thử trên điện thoại
 
 Đánh dấu `[x]` khi đạt. Mục nào sai: ghi lại bước làm, điều thấy được, và chụp màn hình bằng **máy khác** (app chặn
 chụp màn hình).
@@ -550,6 +550,113 @@ Secret TOTP dùng để thử: `JBSWY3DPEHPK3PXP`.
 - [ ] **Q11 (P2): hiện chữ ở màn mở khóa không bị hỏi**
   - Bước: ở màn mở khóa, gõ mật khẩu rồi bấm 👁.
   - Mong đợi: hiện chữ ngay, không hỏi vân tay (đó là chữ bạn vừa gõ).
+
+## R. Tính năng 0.5.0
+
+Cần thêm: một ảnh bất kỳ trong máy (để đính kèm), Google Authenticator có 1–2 tài khoản thử, một trang thanh toán
+thử (vd. trang demo form thẻ, đừng bấm thanh toán thật). Số thẻ thử: `4111 1111 1111 1111`, hết hạn `12/30`, CVV `123`.
+
+**Nhắc backup và tự backup**
+
+- [ ] **R1 (P0): nhắc khi chưa backup**
+  - Bước: cài 0.5.0 đè lên, mở khóa.
+  - Mong đợi: đầu danh sách có thẻ "Bạn chưa xuất backup lần nào…" với các nút Để sau / Tự backup… / Xuất backup.
+- [ ] **R2 (P0): xuất backup từ lời nhắc**
+  - Bước: bấm "Xuất backup", lưu file.
+  - Mong đợi: báo "Đã lưu backup (N mục…)"; lời nhắc biến mất; Cài đặt → Backup ghi "Backup gần nhất: <giờ vừa rồi>".
+- [ ] **R3 (P1): "Để sau"**
+  - Bước: (cần lời nhắc đang hiện) bấm "Để sau".
+  - Mong đợi: lời nhắc ẩn 7 ngày.
+- [ ] **R4 (P0): bật tự backup**
+  - Bước: Cài đặt → Backup → "Tự backup vào thư mục" → tạo / chọn một thư mục (vd. Download/MatKhau) → "Dùng thư mục này" → Cho phép.
+  - Mong đợi: báo "Đã ghi bản tự backup"; trong thư mục có file `matkhau-auto-<ngày giờ>.lvbackup`.
+- [ ] **R5 (P0): tự backup sau khi sửa**
+  - Bước: sửa một mục, ở lại trong app khoảng 30 giây.
+  - Mong đợi: thư mục có thêm một file `matkhau-auto-…`; Cài đặt ghi "Backup gần nhất" mới.
+- [ ] **R6 (P1): chỉ giữ 5 bản**
+  - Bước: bấm "Ghi bản tự backup ngay" 6–7 lần (mỗi lần cách nhau vài giây).
+  - Mong đợi: thư mục chỉ còn 5 file `matkhau-auto-…` mới nhất; file khác trong thư mục không bị đụng tới.
+- [ ] **R7 (P0): bản tự backup khôi phục được**
+  - Bước: Cài đặt → Khôi phục từ backup → chọn một file `matkhau-auto-…` → mật khẩu chính.
+  - Mong đợi: hiện đúng số mục; (có thể bấm Hủy, không cần ghi đè thật).
+- [ ] **R8 (P2): thư mục bị xóa**
+  - Bước: xóa thư mục tự backup bằng trình quản lý file, rồi sửa một mục và chờ 30 giây.
+  - Mong đợi: đầu danh sách hiện "Tự backup đang lỗi: …"; chọn lại thư mục thì hết lỗi.
+
+**Copy từ thanh chọn chữ (bịt lỗ còn hở ở 0.4.0)**
+
+- [ ] **R9 (P0): copy bằng thanh chọn chữ cũng tự xóa**
+  - Bước: mở Sửa một mục, bấm 👁 cho hiện mật khẩu, giữ ngón tay lên chữ → chọn hết → Copy. Dán thử sang app ghi chú, rồi chờ hết thời gian tự xóa clipboard (mặc định 30 giây) và dán lại.
+  - Mong đợi: lần đầu dán được; sau thời gian tự xóa thì clipboard trống (bàn phím Gboard không hiện nội dung trong gợi ý clipboard).
+- [ ] **R10 (P1): dán vẫn bình thường**
+  - Bước: copy một chữ từ app khác, dán vào ô ghi chú của một mục.
+  - Mong đợi: dán được như thường.
+
+**Nhập mã 2FA từ Google Authenticator**
+
+- [ ] **R11 (P0): nhập nhiều mã một lúc**
+  - Bước: trên Google Authenticator: ⋮ → Chuyển tài khoản → Xuất tài khoản → chọn tài khoản → hiện mã QR (dùng máy khác hoặc chụp ảnh mã QR hiện trên máy tính). Trên Mật Khẩu: Cài đặt → "Nhập mã 2FA từ Google Authenticator" → Quét mã QR.
+  - Mong đợi: báo "Mã QR 1/1: thêm N tài khoản"; danh sách hiện đúng tên dịch vụ và tài khoản; bấm "Nhập N mã 2FA" → các mục mới có mã 2FA **trùng với mã trên Google Authenticator**.
+- [ ] **R12 (P1): quét lại không bị trùng**
+  - Bước: làm lại R11 với cùng mã QR.
+  - Mong đợi: báo "… N đã có"; không tạo mục trùng.
+- [ ] **R13 (P1): nhiều mã QR**
+  - Chỉ làm nếu Google Authenticator có trên ~10 tài khoản (xuất ra nhiều mã QR).
+  - Mong đợi: sau mã đầu ghi "Còn X mã QR chưa quét"; quét đủ thì hết cảnh báo.
+- [ ] **R14 (P2): quét nhầm mã ở màn Sửa**
+  - Bước: Sửa một mục → bấm biểu tượng QR → quét mã "Chuyển tài khoản".
+  - Mong đợi: báo dùng Cài đặt → Nhập mã 2FA, không điền gì vào ô secret.
+
+**Thẻ ngân hàng và giấy tờ**
+
+- [ ] **R15 (P0): thêm thẻ**
+  - Bước: + → Thẻ ngân hàng → nhập số thẻ thử, hết hạn, CVV, PIN; để trống ô Tên → Lưu.
+  - Mong đợi: tên tự đặt "Visa •••• 1111"; màn chi tiết hiện thẻ thu gọn; số thẻ / CVV / PIN bị che, bấm 👁 mới hiện; copy số thẻ thì clipboard chỉ có chữ số.
+- [ ] **R16 (P1): kiểm tra số thẻ và hạn**
+  - Bước: sửa số thẻ thành `4111 1111 1111 1112`; nhập hết hạn `13/30`, rồi thử một thẻ đã hết hạn (vd. `01/20`).
+  - Mong đợi: báo "Số thẻ có vẻ bị gõ sai"; hạn `13/30` không cho lưu; thẻ hết hạn hiện "⚠ Thẻ đã hết hạn".
+- [ ] **R17 (P1): giấy tờ tùy thân**
+  - Bước: + → Giấy tờ tùy thân → CCCD, họ tên, số, ngày sinh… → Lưu.
+  - Mong đợi: tên tự đặt "CCCD / CMND – <họ tên>"; số giấy tờ bị che; danh sách có chip lọc "Thẻ" và "Giấy tờ".
+- [ ] **R18 (P0): tự động điền thẻ**
+  - Bước: mở trang thanh toán thử trong Chrome (đã tin trình duyệt ở P), chạm ô số thẻ.
+  - Mong đợi: đề xuất "Visa •••• 1111"; chọn → hỏi vân tay (kể cả khi chưa bật "Xác thực mỗi lần") → điền số thẻ, hết hạn, CVV.
+- [ ] **R19 (P1): không điền thẻ cho trang http**
+  - Bước: thử một trang thanh toán `http://` (không có ổ khóa).
+  - Mong đợi: không có đề xuất thẻ.
+
+**File đính kèm**
+
+- [ ] **R20 (P0): thêm và xem ảnh**
+  - Bước: mở mục giấy tờ ở R17 → Thêm file → chọn một ảnh.
+  - Mong đợi: báo "Đã thêm … (đã mã hóa)"; danh sách có biểu tượng 📎; bấm vào file → (hỏi vân tay nếu bật) → ảnh hiện trong app; chụp màn hình bị chặn.
+- [ ] **R21 (P0): backup có file đính kèm**
+  - Bước: xuất backup, rồi khôi phục chính file đó (Cài đặt → Khôi phục).
+  - Mong đợi: báo "Đã khôi phục N mục, M file"; mở khóa xong ảnh vẫn xem được.
+- [ ] **R22 (P1): giới hạn dung lượng**
+  - Bước: thử đính kèm một file lớn hơn 10 MB (vd. một video).
+  - Mong đợi: báo "File lớn hơn 10 MB", không thêm gì.
+- [ ] **R23 (P1): xuất và xóa file**
+  - Bước: mở file → biểu tượng lưu → đọc cảnh báo → Xuất; rồi biểu tượng thùng rác → Xóa.
+  - Mong đợi: file xuất mở được bằng app xem ảnh; xóa xong file biến khỏi mục.
+- [ ] **R24 (P1): xóa mục thì xóa cả file**
+  - Bước: xóa mục có file đính kèm, xuất backup mới.
+  - Mong đợi: file backup nhỏ lại tương ứng (không còn dữ liệu của file đã xóa).
+
+**Chậm dần khi nhập sai**
+
+- [ ] **R25 (P0): sai 5 lần phải chờ**
+  - Bước: khóa vault, nhập sai mật khẩu chính 5 lần.
+  - Mong đợi: từ lần 2 có dòng "Đã nhập sai N lần…"; sau lần thứ 5 nút "Mở khóa" bị khóa, đếm ngược 0:30.
+- [ ] **R26 (P0): vân tay vẫn mở được**
+  - Bước: trong lúc đang phải chờ ở R25, bấm "Mở bằng vân tay".
+  - Mong đợi: mở được; lần sau nhập sai lại tính từ đầu.
+- [ ] **R27 (P1): khởi động lại máy không được miễn**
+  - Bước: sai 5 lần, khởi động lại điện thoại, mở app ngay.
+  - Mong đợi: vẫn phải chờ đủ 30 giây.
+- [ ] **R28 (P2): Recovery Key cũng bị đếm**
+  - Bước: ở màn Recovery Key, nhập sai key (đủ 32 ký tự) vài lần.
+  - Mong đợi: cùng bộ đếm với mật khẩu chính.
 
 ## M. Cài bản mới đè lên (làm khi có bản 0.1.2+)
 

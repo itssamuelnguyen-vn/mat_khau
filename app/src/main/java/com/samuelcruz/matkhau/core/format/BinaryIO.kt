@@ -56,6 +56,17 @@ class ByteReader(private val data: ByteArray) {
         return raw(len)
     }
 
+    /**
+     * Như [bytes] nhưng KHÔNG chép: trả về vị trí (start, length) của trường trong mảng gốc. Dùng cho dữ liệu lớn
+     * (file đính kèm trong backup) để không phải giữ hai bản trong RAM.
+     */
+    fun span(maxLength: Int): Pair<Int, Int> {
+        val len = u32()
+        if (len > maxLength) throw FormatException("Trường dữ liệu quá dài")
+        need(len)
+        return (position to len).also { position += len }
+    }
+
     /** Bản sao các byte từ đầu đến vị trí hiện tại (dùng làm AAD). */
     fun consumedSoFar(): ByteArray = data.copyOfRange(0, position)
 

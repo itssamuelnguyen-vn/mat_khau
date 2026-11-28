@@ -27,6 +27,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -53,6 +54,34 @@ import com.samuelcruz.matkhau.security.AccessibilityGuard
 import androidx.lifecycle.compose.LifecycleResumeEffect
 
 const val MIN_MASTER_PASSWORD_LENGTH = 12
+
+/**
+ * Thời gian còn phải chờ sau nhiều lần nhập sai (đếm ngược mỗi giây). Đọc lại sau mỗi lần thử (formError đổi) và
+ * khi quay lại màn hình.
+ */
+@Composable
+private fun rememberUnlockWait(vm: VaultViewModel): Long {
+    var wait by remember { mutableLongStateOf(vm.unlockWaitMs()) }
+    LaunchedEffect(vm.formError, vm.busyText) {
+        wait = vm.unlockWaitMs()
+        while (wait > 0) {
+            kotlinx.coroutines.delay(1000)
+            wait = vm.unlockWaitMs()
+        }
+    }
+    return wait
+}
+
+@Composable
+private fun UnlockWaitNotice(vm: VaultViewModel, wait: Long) {
+    if (vm.busyText != null) return   // đang kiểm tra: bộ đếm đã tính trước lần này, chưa biết đúng hay sai
+    if (wait > 0) {
+        val s = (wait + 999) / 1000
+        ErrorText("Đã nhập sai ${vm.unlockFailures} lần. Thử lại sau %d:%02d".format(s / 60, s % 60))
+    } else if (vm.unlockFailures >= 2) {
+        Hint("Đã nhập sai ${vm.unlockFailures} lần. Từ lần sai thứ ${com.samuelcruz.matkhau.core.vault.UnlockThrottle.FREE_ATTEMPTS + 1} phải chờ lâu dần (vân tay không bị giới hạn).")
+    }
+}
 
 @Composable
 private fun AppLogo() {
@@ -152,10 +181,12 @@ fun UnlockScreen(vm: VaultViewModel) {
             ErrorText("⚠ Bàn phím \"${kb.label}\" (${kb.packageName}) không phải bàn phím hệ thống: nó thấy được mật khẩu bạn gõ. Nên mở bằng vân tay.")
         }
         SecretField(password, { password = it }, "Mật khẩu chính")
-        ErrorText(vm.formError)
+        val wait = rememberUnlockWait(vm)
+        if (wait <= 0) ErrorText(vm.formError)
+        UnlockWaitNotice(vm, wait)
         Button(
             onClick = { vm.unlock(password); password = "" },
-            enabled = password.isNotEmpty() && vm.busyText == null,
+            enabled = password.isNotEmpty() && vm.busyText == null && wait <= 0,
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Mở khóa") }
         if (bioAvailable && activity != null) {
@@ -183,10 +214,12 @@ fun RecoveryUnlockScreen(vm: VaultViewModel) {
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, keyboardType = KeyboardType.Password),
             modifier = Modifier.fillMaxWidth(),
         )
-        ErrorText(vm.formError)
+        val wait = rememberUnlockWait(vm)
+        if (wait <= 0) ErrorText(vm.formError)
+        UnlockWaitNotice(vm, wait)
         Button(
             onClick = { vm.unlockWithRecoveryKey(key) },
-            enabled = key.count { it.isLetterOrDigit() } == 32 && vm.busyText == null,
+            enabled = key.count { it.isLetterOrDigit() } == 32 && vm.busyText == null && wait <= 0,
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Mở khóa") }
     }

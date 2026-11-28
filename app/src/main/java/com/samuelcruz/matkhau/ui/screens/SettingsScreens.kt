@@ -35,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -82,6 +83,9 @@ fun SettingsScreen(vm: VaultViewModel) {
     }
     val csvLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         vm.openCsvFile(context, uri)
+    }
+    val folderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        vm.setAutoBackupFolder(context, uri)
     }
 
     AppScaffold(title = "Cài đặt", onBack = { vm.back() }) {
@@ -191,12 +195,38 @@ fun SettingsScreen(vm: VaultViewModel) {
             importLauncher.launch(arrayOf("*/*"))
         }
         Hint("Backup mở được bằng mật khẩu chính (hoặc Recovery Key) TẠI THỜI ĐIỂM xuất file. Hãy xuất backup định kỳ.")
+        // Đọc lại sau mỗi tác vụ (backup xong), sau khi đổi thư mục và sau mỗi lần tự backup chạy ngầm.
+        val autoRuns by vm.autoBackupRuns.collectAsState()
+        val backupInfo = remember(vm.busyText, vm.reminderVersion, autoRuns) {
+            val fmt = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+            val last = vm.settings.lastBackupAt.takeIf { it > 0 }?.let { "Backup gần nhất: ${fmt.format(Date(it))}" } ?: "Chưa xuất backup lần nào"
+            val changes = vm.settings.changesSinceBackup
+            last + if (changes > 0) " · $changes thay đổi chưa có trong backup" else ""
+        }
+        Hint(backupInfo)
+        val folder = remember(vm.busyText, vm.reminderVersion, autoRuns) { vm.autoBackupFolderLabel(context) }
+        val autoError = remember(vm.busyText, vm.reminderVersion, autoRuns) { vm.settings.autoBackupLastError }
+        SettingRow(
+            "Tự backup vào thư mục",
+            if (folder == null) "Tắt. Chọn một thư mục (vd. thư mục Google Drive / Syncthing đồng bộ): app tự ghi file mã hóa sau mỗi thay đổi, giữ ${com.samuelcruz.matkhau.security.AutoBackup.KEEP} bản mới nhất"
+            else "Đang bật: $folder. Bấm để chọn thư mục khác",
+        ) {
+            vm.suspendAutoLock()
+            folderLauncher.launch(null)
+        }
+        if (folder != null) {
+            if (autoError != null) ErrorText("Lần tự backup gần nhất lỗi: $autoError")
+            SettingRow("Ghi bản tự backup ngay", "Không cần chờ thay đổi tiếp theo") { vm.runAutoBackupNow() }
+            SettingRow("Tắt tự backup", "Các file đã ghi vẫn còn trong thư mục") { vm.disableAutoBackup(context) }
+            Hint("File tự backup cũng chỉ mở được bằng mật khẩu chính / Recovery Key. Thư mục được đồng bộ lên mây thì mật khẩu chính càng phải mạnh.")
+        }
 
         SectionTitle("Chuyển từ app khác")
         SettingRow("Nhập từ file CSV", "Bitwarden, Chrome / Google, Firefox, KeePass / KeePassXC…") {
             vm.suspendAutoLock()
             csvLauncher.launch(arrayOf("text/csv", "text/comma-separated-values", "text/plain", "application/csv", "*/*"))
         }
+        SettingRow("Nhập mã 2FA từ Google Authenticator", "Quét mã QR \"Chuyển tài khoản\": nhiều mã 2FA một lúc") { vm.startTotpImport() }
 
         SectionTitle("Thông tin")
         SettingRow("Sức khỏe mật khẩu", "Mật khẩu yếu, dùng chung, lâu chưa đổi, thiếu 2FA") { vm.navigate(Screen.Health) }
