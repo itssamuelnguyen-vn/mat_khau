@@ -14,6 +14,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
+import com.samuelcruz.matkhau.ui.components.SensitiveWindow
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.filled.Print
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -28,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -50,6 +55,8 @@ import com.samuelcruz.matkhau.ui.components.Hint
 import com.samuelcruz.matkhau.ui.components.SecretField
 import com.samuelcruz.matkhau.ui.components.StrengthMeter
 import com.samuelcruz.matkhau.ui.components.sensitive
+import com.samuelcruz.matkhau.ui.components.RecoveryKeyFont
+import com.samuelcruz.matkhau.ui.components.recoveryKeyText
 import com.samuelcruz.matkhau.security.AccessibilityGuard
 import androidx.lifecycle.compose.LifecycleResumeEffect
 
@@ -100,6 +107,8 @@ fun WelcomeScreen(vm: VaultViewModel) {
     }
     AppScaffold(title = "Mật Khẩu") {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) { AppLogo() }
+        val problem by vm.repository.loadProblem.collectAsState()
+        problem?.let { ErrorText("⚠ $it") }
         Text("Trình quản lý mật khẩu chạy hoàn toàn offline", style = MaterialTheme.typography.titleMedium)
         Hint("Không server, không tài khoản, không Internet. Dữ liệu được mã hóa trên máy này bằng mật khẩu chính của bạn.")
         Button(onClick = { vm.showLocked(LockedScreen.Create) }, modifier = Modifier.fillMaxWidth()) {
@@ -205,12 +214,12 @@ fun UnlockScreen(vm: VaultViewModel) {
 fun RecoveryUnlockScreen(vm: VaultViewModel) {
     var key by remember { mutableStateOf("") }
     AppScaffold(title = "Mở bằng Recovery Key", onBack = { vm.showLocked(LockedScreen.Unlock) }) {
-        Hint("Nhập Recovery Key 32 ký tự bạn đã ghi lại khi tạo vault (có hoặc không có dấu gạch đều được). Sau khi mở, bạn sẽ đặt mật khẩu chính mới.")
+        Hint("Nhập Recovery Key 32 ký tự bạn đã ghi lại khi tạo vault (có hoặc không có dấu gạch đều được). Key chỉ gồm A–Z và 2–7; gõ nhầm 0 / 1 / 8 thì app tự hiểu là O / I / B. Sau khi mở, bạn sẽ đặt mật khẩu chính mới.")
         TrackedTextField(
             value = key,
             onValueChange = { key = it.uppercase() },
             label = { Text("XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX") },
-            textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+            textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = RecoveryKeyFont),
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, keyboardType = KeyboardType.Password),
             modifier = Modifier.fillMaxWidth(),
         )
@@ -225,10 +234,18 @@ fun RecoveryUnlockScreen(vm: VaultViewModel) {
     }
 }
 
-/** Hiển thị Recovery Key MỘT lần. Không có nút copy: nên chép tay ra giấy. */
+/**
+ * Hiển thị Recovery Key MỘT lần. Không có nút copy (clipboard có lịch sử / đồng bộ mây): chép tay hoặc in ra giấy,
+ * rồi gõ lại 2 nhóm ngẫu nhiên để chắc là đã chép đúng.
+ */
 @Composable
 fun ShowRecoveryKeyScreen(vm: VaultViewModel, recoveryKey: String, firstTime: Boolean, replacedUnconfirmed: Boolean) {
     var saved by remember { mutableStateOf(false) }
+    var verifying by remember { mutableStateOf(false) }
+    var confirmPrint by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    // Hai nhóm ngẫu nhiên (trong 8) để kiểm tra lại, cố định trong suốt màn hình này.
+    val checkGroups = remember(recoveryKey) { (0 until 8).shuffled(java.security.SecureRandom()).take(2).sorted() }
     // Chép tay mất thời gian: giữ màn hình sáng và tạm dừng hẹn giờ tự khóa khi không thao tác.
     // Tắt màn hình hay rời app thì vẫn khóa; lần mở khóa sau app sẽ tạo key mới (recoveryKeyPending).
     val view = LocalView.current
@@ -240,6 +257,12 @@ fun ShowRecoveryKeyScreen(vm: VaultViewModel, recoveryKey: String, firstTime: Bo
             vm.pauseInactivityLock(false)
         }
     }
+
+    if (verifying) {
+        VerifyRecoveryKey(recoveryKey, checkGroups, onBack = { verifying = false }, onVerified = { vm.finishRecoveryKeyScreen() })
+        return
+    }
+
     AppScaffold(title = "Recovery Key") {
         Text(
             when {
@@ -253,24 +276,87 @@ fun ShowRecoveryKeyScreen(vm: VaultViewModel, recoveryKey: String, firstTime: Bo
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 recoveryKey.split("-").chunked(2).forEach { pair ->
                     Text(
-                        pair.joinToString("  -  "),
-                        fontFamily = FontFamily.Monospace,
+                        recoveryKeyText(pair.joinToString("  -  ")),
+                        fontFamily = RecoveryKeyFont,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 22.sp,
+                        fontSize = 24.sp,
+                        letterSpacing = 1.sp,
                     )
                 }
             }
         }
-        Hint("• Chép tay ra giấy, cất nơi an toàn (két, ngăn kéo khóa). Không chụp màn hình (app cũng chặn chụp).")
+        Hint("Key chỉ có chữ in hoa A–Z và số 2–7 (số được tô màu). KHÔNG có số 0, 1, 8, 9: thấy hình tròn là chữ O, nét thẳng là chữ I. Viết rõ các cặp dễ nhầm: Z / 2, S / 5, G / 6, T / 7.")
+        Hint("• Chép tay ra giấy (hoặc in), cất nơi an toàn (két, ngăn kéo khóa). Không chụp màn hình (app cũng chặn chụp).")
         Hint("• Ai có Recovery Key + file vault/backup là mở được vault. Hãy giữ nó như giữ chìa khóa nhà.")
         Hint("• Nếu quên mật khẩu chính, đây là cách DUY NHẤT để lấy lại dữ liệu.")
+        OutlinedButton(onClick = { confirmPrint = true }, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Print, contentDescription = null)
+            Text("  In phiếu khẩn cấp")
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = saved, onCheckedChange = { saved = it })
-            Text("Tôi đã chép Recovery Key ra giấy")
+            Text("Tôi đã chép (hoặc in) Recovery Key ra giấy")
         }
-        Button(onClick = { vm.finishRecoveryKeyScreen() }, enabled = saved, modifier = Modifier.fillMaxWidth()) {
-            Text("Tiếp tục")
+        Button(onClick = { verifying = true }, enabled = saved, modifier = Modifier.fillMaxWidth()) {
+            Text("Tiếp tục: kiểm tra lại")
         }
+    }
+
+    if (confirmPrint) {
+        AlertDialog(
+            onDismissRequest = { confirmPrint = false },
+            title = { Text("In Recovery Key?") },
+            text = {
+                SensitiveWindow()
+                Text(
+                    "• Chọn thẳng máy in trong nhà (Wi-Fi / USB). Dịch vụ in qua đám mây sẽ gửi tờ này ra ngoài.\n" +
+                        "• ĐỪNG chọn \"Lưu dưới dạng PDF\": file PDF lại là một bản Recovery Key nằm trong máy.\n" +
+                        "• Màn hình xem trước của trình in là app hệ thống, không được chặn chụp màn hình như app này.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmPrint = false
+                    // Trình in là app khác: hoãn "khóa khi rời app", nếu không vault khóa giữa chừng và key bị thay.
+                    vm.suspendAutoLock()
+                    com.samuelcruz.matkhau.ui.RecoveryKeyPrinter.print(context, recoveryKey) { vm.resumeAutoLock() }
+                }) { Text("In") }
+            },
+            dismissButton = { TextButton(onClick = { confirmPrint = false }) { Text("Hủy") } },
+        )
+    }
+}
+
+/** Gõ lại 2 nhóm của key từ tờ giấy (không hiện key): bắt lỗi chép nhầm ngay bây giờ, không phải lúc cần dùng. */
+@Composable
+private fun VerifyRecoveryKey(recoveryKey: String, groups: List<Int>, onBack: () -> Unit, onVerified: () -> Unit) {
+    val typed = remember { mutableStateListOf(*Array(groups.size) { "" }) }
+    var error by remember { mutableStateOf<String?>(null) }
+    androidx.activity.compose.BackHandler(onBack = onBack)
+    AppScaffold(title = "Kiểm tra Recovery Key", onBack = onBack) {
+        Text("Nhìn vào tờ giấy bạn vừa chép (không phải màn hình) và gõ lại các nhóm sau:", style = MaterialTheme.typography.titleMedium)
+        groups.forEachIndexed { i, g ->
+            TrackedTextField(
+                value = typed[i],
+                onValueChange = { typed[i] = it.uppercase().take(9); error = null },
+                label = { Text("Nhóm thứ ${g + 1} (trong 8 nhóm)") },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.headlineSmall.copy(fontFamily = RecoveryKeyFont),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        ErrorText(error)
+        Button(
+            onClick = {
+                val wrong = groups.indices.filterNot { com.samuelcruz.matkhau.core.vault.RecoveryKey.groupMatches(recoveryKey, groups[it], typed[it]) }
+                if (wrong.isEmpty()) onVerified()
+                else error = "Nhóm thứ ${wrong.joinToString(" và ") { "${groups[it] + 1}" }} không khớp. Bấm \"Xem lại key\" và sửa tờ giấy (chú ý Z / 2, S / 5, G / 6, T / 7)."
+            },
+            enabled = typed.all { com.samuelcruz.matkhau.core.vault.RecoveryKey.normalize(it).length == 4 },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Xác nhận") }
+        TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Xem lại key") }
     }
 }
 

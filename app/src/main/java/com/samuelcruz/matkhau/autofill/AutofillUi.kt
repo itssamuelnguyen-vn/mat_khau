@@ -117,7 +117,9 @@ private fun AutofillFrame(vm: VaultViewModel, onCancel: () -> Unit, content: @Co
 private fun targetDescription(context: android.content.Context, target: AutofillTarget): Pair<String, String> = when (target) {
     is AutofillTarget.Web -> displayHost(target.host) to "Trang web (${AppIdentity.label(context, target.browserPackage)})"
     is AutofillTarget.UnverifiedBrowser -> displayHost(target.host) to "Trang web (${AppIdentity.label(context, target.packageName)}, chưa xác nhận)"
-    is AutofillTarget.App -> AppIdentity.label(context, target.packageName) to target.packageName
+    is AutofillTarget.App -> target.webHost?.let { host ->
+        displayHost(host) to "Trang web mở TRONG ${AppIdentity.label(context, target.packageName)} (không phải trình duyệt): Mật Khẩu không xác minh được tên miền"
+    } ?: (AppIdentity.label(context, target.packageName) to target.packageName)
 }
 
 /** Tên miền như trình duyệt báo, kèm dạng punycode nếu khác (lộ ra chữ Cyrillic / chữ lạ giả mạo). */
@@ -194,7 +196,7 @@ fun AutofillPickRoot(
         val logins = entries.filter { it.type == EntryType.LOGIN }
         val matching = AutofillMatcher.matching(logins, target)
         // Gợi ý theo tên chỉ cho app cài từ cửa hàng: app giả mạo (cài ngoài) không được "nhắc" mục của app thật.
-        val suggested = if (target is AutofillTarget.App && target.fromStore) {
+        val suggested = if (target is AutofillTarget.App && target.fromStore && target.webHost == null) {
             logins.filter { it !in matching && AutofillMatcher.suggestedForApp(it, target.packageName) }
         } else emptyList()
         val others = logins.filter { it !in matching && it !in suggested && (query.isBlank() || it.matches(query)) }
@@ -223,7 +225,9 @@ fun AutofillPickRoot(
                     when (target) {
                         is AutofillTarget.Web -> "Không có mục nào lưu cho tên miền này. Mẹo: lưu URL là tên miền gốc (vd. google.com) để dùng cho mọi trang con."
                         is AutofillTarget.UnverifiedBrowser -> "Xác nhận trình duyệt ở trên để thấy các mục của trang này."
-                        is AutofillTarget.App -> "Chưa có mục nào được liên kết với ứng dụng này. Chọn một mục bên dưới để liên kết."
+                        is AutofillTarget.App -> if (target.webHost != null) {
+                            "Trang web trong app: chỉ đề xuất mục đã liên kết với app này VÀ có URL đúng tên miền ${target.webHost}."
+                        } else "Chưa có mục nào được liên kết với ứng dụng này. Chọn một mục bên dưới để liên kết."
                     },
                 )
             }
@@ -287,7 +291,10 @@ private fun CardPick(
         if (target is AutofillTarget.UnverifiedBrowser) TrustBrowserCard(target, onTrustBrowser)
         when {
             target is AutofillTarget.UnverifiedBrowser -> Hint("Xác nhận trình duyệt ở trên trước khi điền thẻ.")
-            !AutofillMatcher.cardAllowed(target) -> ErrorText("Trang này không mã hóa (http) hoặc không xác định được ứng dụng: không điền thẻ.")
+            !AutofillMatcher.cardAllowed(target) -> ErrorText(
+                if (target is AutofillTarget.App && target.webHost != null) "Đây là trang web mở bên trong một app (không phải trình duyệt): không điền thẻ. Hãy mở trang trong trình duyệt."
+                else "Trang này không mã hóa (http) hoặc không xác định được ứng dụng: không điền thẻ.",
+            )
             cards.isEmpty() -> Hint("Chưa có thẻ nào trong vault. Thêm thẻ trong app Mật Khẩu (+ → Thẻ ngân hàng).")
             else -> cards.forEach { e ->
                 ListItem(
@@ -369,17 +376,21 @@ private fun MismatchDialog(
                     if (!target.fromStore) {
                         ErrorText("⚠ App này KHÔNG được cài từ cửa hàng đã biết. App giả mạo ngân hàng / mạng xã hội thường được cài từ file APK. Đừng điền nếu không chắc.")
                     }
-                    Text("Chỉ tiếp tục nếu bạn chắc đây là ứng dụng thật. Liên kết = lần sau tự đề xuất mục này cho đúng app này (cùng chứng chỉ ký).")
+                    if (target.webHost != null) {
+                        ErrorText("⚠ Ô này nằm trên trang web ${target.webHost} mở BÊN TRONG app (không phải trình duyệt). Link lừa đảo gửi qua tin nhắn hay mở kiểu này. Không thể liên kết; chỉ điền nếu bạn chắc chắn trang này thật.")
+                    } else {
+                        Text("Chỉ tiếp tục nếu bạn chắc đây là ứng dụng thật. Liên kết = lần sau tự đề xuất mục này cho đúng app này (cùng chứng chỉ ký).")
+                    }
                 }
             },
             confirmButton = {
-                if (target.certSha256 != null) TextButton(onClick = onLinkAndFill) { Text("Liên kết & điền") }
+                if (target.certSha256 != null && target.webHost == null) TextButton(onClick = onLinkAndFill) { Text("Liên kết & điền") }
                 else TextButton(onClick = onFillOnce) { Text("Điền lần này") }
             },
             dismissButton = {
                 Row2 {
                     TextButton(onClick = onDismiss) { Text("Hủy") }
-                    if (target.certSha256 != null) TextButton(onClick = onFillOnce) { Text("Chỉ lần này") }
+                    if (target.certSha256 != null && target.webHost == null) TextButton(onClick = onFillOnce) { Text("Chỉ lần này") }
                 }
             },
         )
@@ -567,7 +578,8 @@ fun AutofillSaveRoot(vm: VaultViewModel, save: PendingSave, onDone: () -> Unit) 
                                         username = username.trim(),
                                         password = save.password,
                                         url = (t as? AutofillTarget.Web)?.let { webUrl(it, urlHost) }.orEmpty(),
-                                        linkedApps = (t as? AutofillTarget.App)?.certSha256?.let { listOf(LinkedApp(t.packageName, it)) }.orEmpty(),
+                                        // Trang web trong app: không liên kết (tên miền không xác minh được), mục chỉ được lưu.
+                                        linkedApps = (t as? AutofillTarget.App)?.takeIf { it.webHost == null }?.certSha256?.let { listOf(LinkedApp(t.packageName, it)) }.orEmpty(),
                                         createdAt = now,
                                         updatedAt = now,
                                         passwordUpdatedAt = now,

@@ -216,6 +216,31 @@ fun SecretField(
     )
 }
 
+/**
+ * Font cho Recovery Key: JetBrains Mono (giấy phép OFL, nhúng trong app, không tải mạng). Mọi ký tự khác hẳn nhau
+ * (2 / Z, 5 / S, 6 / G, 0 có chấm...), để chép tay không nhầm.
+ */
+val RecoveryKeyFont = androidx.compose.ui.text.font.FontFamily(
+    androidx.compose.ui.text.font.Font(com.samuelcruz.matkhau.R.font.jetbrains_mono_bold, androidx.compose.ui.text.font.FontWeight.Bold),
+)
+
+/** Chữ số tô màu khác chữ cái: nhìn qua là biết "2" hay "Z", không phụ thuộc vào font. */
+@Composable
+fun recoveryKeyText(text: String): androidx.compose.ui.text.AnnotatedString {
+    val digit = MaterialTheme.colorScheme.primary
+    return androidx.compose.ui.text.buildAnnotatedString {
+        text.forEach { c ->
+            if (c.isDigit()) {
+                pushStyle(androidx.compose.ui.text.SpanStyle(color = digit))
+                append(c)
+                pop()
+            } else {
+                append(c)
+            }
+        }
+    }
+}
+
 /** Thanh độ mạnh mật khẩu (ước lượng thô). */
 @Composable
 fun StrengthMeter(password: String) {

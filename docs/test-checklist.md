@@ -1,4 +1,4 @@
-# Mật Khẩu 0.5.0: checklist thử trên điện thoại
+# Mật Khẩu 0.5.2: checklist thử trên điện thoại
 
 Đánh dấu `[x]` khi đạt. Mục nào sai: ghi lại bước làm, điều thấy được, và chụp màn hình bằng **máy khác** (app chặn
 chụp màn hình).
@@ -583,11 +583,26 @@ thử (vd. trang demo form thẻ, đừng bấm thanh toán thật). Số thẻ 
   - Bước: xóa thư mục tự backup bằng trình quản lý file, rồi sửa một mục và chờ 30 giây.
   - Mong đợi: đầu danh sách hiện "Tự backup đang lỗi: …"; chọn lại thư mục thì hết lỗi.
 
+**Font Recovery Key (0.5.2)**
+
+- [ ] **R0 (P1): Recovery Key dễ chép**
+  - Bước: Cài đặt → Tạo Recovery Key mới (hoặc tạo vault mới).
+  - Mong đợi: key hiện bằng font JetBrains Mono, chữ số (2–7) có màu khác chữ cái; dưới key có ghi chú "chỉ có A–Z và 2–7…". Ô nhập Recovery Key ở màn mở khóa dùng cùng font.
+- [ ] **R0b (P0): kiểm tra lại sau khi chép**
+  - Bước: đánh dấu "Tôi đã chép…" → "Tiếp tục: kiểm tra lại" → gõ sai một nhóm → Xác nhận; rồi gõ đúng cả hai nhóm.
+  - Mong đợi: key không hiện ở màn kiểm tra; gõ sai thì báo nhóm nào không khớp, "Xem lại key" quay lại màn key; gõ đúng (kể cả chữ thường, 0 thay O) thì vào vault.
+- [ ] **R0c (P1): in phiếu khẩn cấp**
+  - Bước: bấm "In phiếu khẩn cấp" → đọc cảnh báo → In → xem trước trong trình in (không cần in thật, bấm quay lại).
+  - Mong đợi: trang A4 có tiêu đề, ngày in, key 4 dòng (chữ số gạch dưới), hướng dẫn dùng; quay lại app vẫn ở màn Recovery Key (vault KHÔNG bị khóa giữa chừng, key không bị đổi).
+
 **Copy từ thanh chọn chữ (bịt lỗ còn hở ở 0.4.0)**
 
 - [ ] **R9 (P0): copy bằng thanh chọn chữ cũng tự xóa**
   - Bước: mở Sửa một mục, bấm 👁 cho hiện mật khẩu, giữ ngón tay lên chữ → chọn hết → Copy. Dán thử sang app ghi chú, rồi chờ hết thời gian tự xóa clipboard (mặc định 30 giây) và dán lại.
   - Mong đợi: lần đầu dán được; sau thời gian tự xóa thì clipboard trống (bàn phím Gboard không hiện nội dung trong gợi ý clipboard).
+- [ ] **R9b (P0): bôi đen chữ không làm app dừng (lỗi của 0.5.0)**
+  - Bước: ở màn tạo / đổi mật khẩu chính (hoặc ô ghi chú của một mục), gõ chữ, giữ ngón tay để bôi đen; thử cả Chọn tất cả và Dán.
+  - Mong đợi: hiện thanh chọn chữ, app không bị dừng. Ô đang che (••••) không có nút Copy (Android chặn copy ô mật khẩu đang che); bấm 👁 cho hiện chữ rồi mới copy được.
 - [ ] **R10 (P1): dán vẫn bình thường**
   - Bước: copy một chữ từ app khác, dán vào ô ghi chú của một mục.
   - Mong đợi: dán được như thường.

@@ -45,5 +45,5 @@ Nhấn **Ctrl+Shift+B** trong VS Code, rồi chép file APK trong `build\apk\` s
 - Không chống được mã độc có quyền root. Mã độc dùng quyền Trợ năng: xem lớp bảo vệ ở trên (Android 14+).
 - Thanh đo độ mạnh mật khẩu còn thô.
 
-Chi tiết cho người phát triển (kiến trúc khóa, định dạng file): xem `CLAUDE.md`. Danh sách từ BIP39: MIT, xem
-`licenses/`.
+Chi tiết cho người phát triển (kiến trúc khóa, định dạng file): xem `CLAUDE.md`. Danh sách từ BIP39: MIT; font
+JetBrains Mono (cho Recovery Key): SIL OFL 1.1; xem `licenses/`.

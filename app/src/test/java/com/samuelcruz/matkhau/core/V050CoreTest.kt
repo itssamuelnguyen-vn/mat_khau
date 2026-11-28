@@ -219,6 +219,35 @@ class V050CoreTest {
         assertEquals(1, dup.expMonth); assertNull(dup.expiry)
     }
 
+    @Test
+    fun inAppWebPage_onlyNarrowsLinkedEntries_andGetsNoCards() {
+        val cert = "ab".repeat(32)
+        val linked = Entry(id = "z", title = "Zalo", url = "https://id.zalo.me", createdAt = 0, updatedAt = 0,
+            linkedApps = listOf(com.samuelcruz.matkhau.model.LinkedApp("com.zing.zalo", cert)))
+        val native = com.samuelcruz.matkhau.core.autofill.AutofillTarget.App("com.zing.zalo", cert)
+        val phishing = native.copy(webHost = "zalo-login.evil.example")
+        val real = native.copy(webHost = "id.zalo.me")
+        assertTrue(com.samuelcruz.matkhau.core.autofill.AutofillMatcher.matches(linked, native))
+        assertFalse(com.samuelcruz.matkhau.core.autofill.AutofillMatcher.matches(linked, phishing))
+        assertTrue(com.samuelcruz.matkhau.core.autofill.AutofillMatcher.matches(linked, real))
+        assertFalse(com.samuelcruz.matkhau.core.autofill.AutofillMatcher.matches(linked.copy(url = ""), real))
+        assertTrue(com.samuelcruz.matkhau.core.autofill.AutofillMatcher.cardAllowed(native))
+        assertFalse(com.samuelcruz.matkhau.core.autofill.AutofillMatcher.cardAllowed(real))
+    }
+
+    @Test
+    fun recoveryKey_groupCheck() {
+        val key = com.samuelcruz.matkhau.core.vault.RecoveryKey.format(ByteArray(20) { (it * 37).toByte() })
+        val groups = key.split('-')
+        assertEquals(8, groups.size)
+        assertTrue(com.samuelcruz.matkhau.core.vault.RecoveryKey.groupMatches(key, 0, groups[0].lowercase()))
+        assertTrue(com.samuelcruz.matkhau.core.vault.RecoveryKey.groupMatches(key, 7, " " + groups[7] + " "))
+        assertFalse(com.samuelcruz.matkhau.core.vault.RecoveryKey.groupMatches(key, 1, groups[2]))
+        assertFalse(com.samuelcruz.matkhau.core.vault.RecoveryKey.groupMatches(key, 9, groups[0]))
+        // Gõ 0 / 1 / 8 thay cho O / I / B vẫn khớp
+        assertEquals("OIBZ", com.samuelcruz.matkhau.core.vault.RecoveryKey.normalize("01-8z"))
+    }
+
     // ------------------------------------------------------------------ file đính kèm
 
     private fun ref(id: String, data: ByteArray) =

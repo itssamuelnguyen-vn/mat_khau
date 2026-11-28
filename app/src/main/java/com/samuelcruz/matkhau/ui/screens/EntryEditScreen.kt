@@ -301,6 +301,8 @@ fun EntryEditScreen(vm: VaultViewModel, id: String?, initialType: EntryType) {
 
         SectionTitle("Trường tùy chỉnh")
         fields.forEachIndexed { index, f ->
+            // key theo từng trường: xóa một trường thì trạng thái "đang hiện" không nhảy sang trường đứng sau.
+            androidx.compose.runtime.key(f) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     TrackedTextField(f.name, { f.name = it }, label = { Text("Tên trường") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -313,9 +315,10 @@ fun EntryEditScreen(vm: VaultViewModel, id: String?, initialType: EntryType) {
                         // Bỏ che = hiện giá trị: qua cổng xác thực.
                         Switch(checked = f.hidden, onCheckedChange = { on -> if (on) f.hidden = true else guard("Bỏ che “${f.name}”") { f.hidden = false } })
                         Text("  Che giấu", modifier = Modifier.weight(1f))
-                        IconButton(onClick = { fields.removeAt(index) }) { Icon(Icons.Filled.Delete, "Xóa trường") }
+                        IconButton(onClick = { fields.remove(f) }) { Icon(Icons.Filled.Delete, "Xóa trường") }
                     }
                 }
+            }
             }
         }
         OutlinedButton(onClick = { fields.add(FieldDraft("", "", true)) }) {

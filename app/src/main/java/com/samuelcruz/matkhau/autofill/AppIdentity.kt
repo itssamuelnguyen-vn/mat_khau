@@ -24,7 +24,13 @@ object AppIdentity {
     fun of(context: Context, packageName: String): Identity {
         val (current, all) = certs(context, packageName)
         val installer = installer(context, packageName)
-        return Identity(current, all, installer, installer != null && installer in STORES && isSystemApp(context, installer))
+        // Android 11+: nơi THẬT SỰ bắt đầu cài (không giả được bằng `adb install -i com.android.vending`).
+        val initiating = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching { context.packageManager.getInstallSourceInfo(packageName).initiatingPackageName }.getOrNull()
+        } else null
+        val fromStore = installer != null && installer in STORES && isSystemApp(context, installer) &&
+            (initiating == null || initiating in STORES)
+        return Identity(current, all, installer, fromStore)
     }
 
     private fun isSystemApp(context: Context, packageName: String): Boolean = try {

@@ -2,8 +2,10 @@ package com.samuelcruz.matkhau.data
 
 import android.content.ContentValues
 import android.content.Context
+import android.database.DatabaseErrorHandler
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import java.io.File
 
 /** Một dòng trong bảng items: chỉ có id ngẫu nhiên + dữ liệu đã mã hóa. */
 class StoredItem(val id: String, val format: Int, val nonce: ByteArray, val ciphertext: ByteArray)
@@ -17,7 +19,30 @@ class StoredItem(val id: String, val format: Int, val nonce: ByteArray, val ciph
  *   fmt = 1: một mục (Entry JSON đã mã hóa)
  *   fmt = 2: một đoạn file đính kèm (xem core.vault.Attachments); vẫn đúng 2 bảng, không đổi schema.
  */
-class VaultDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
+class VaultDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION, PreserveOnCorruption(context.applicationContext)) {
+
+    init {
+        // Journal kiểu rollback thay vì WAL: secure_delete xóa được cả dữ liệu cũ, không còn bản trang cũ (vd. header
+        // trước khi đổi mật khẩu) nằm lại trong file -wal.
+        setWriteAheadLoggingEnabled(false)
+    }
+
+    /**
+     * Mặc định Android XÓA file DB khi gặp lỗi "database disk image is malformed" (DefaultDatabaseErrorHandler):
+     * một trang hỏng vì mất điện là mất cả vault. Ở đây chỉ đổi tên file hỏng (giữ lại để cứu), app báo cho người dùng
+     * khôi phục từ backup.
+     */
+    private class PreserveOnCorruption(private val context: Context) : DatabaseErrorHandler {
+        override fun onCorruption(db: SQLiteDatabase) {
+            runCatching { db.close() }
+            val stamp = System.currentTimeMillis()
+            val base = context.getDatabasePath(DB_NAME)
+            for (suffix in listOf("", "-journal", "-wal", "-shm")) {
+                val f = File(base.path + suffix)
+                if (f.exists()) runCatching { f.renameTo(File(base.parentFile, "$DB_NAME.corrupt-$stamp$suffix")) }
+            }
+        }
+    }
 
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
@@ -78,11 +103,24 @@ class VaultDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
      * trả về để bị đếm là hỏng.
      */
     fun entryItems(): List<StoredItem> =
-        readableDatabase.rawQuery("SELECT id, fmt, nonce, ct FROM items WHERE fmt != ?", arrayOf(ATTACHMENT_FORMAT.toString())).use { c ->
+        readableDatabase.rawQuery(
+            "SELECT id, fmt, nonce, ct FROM items WHERE fmt != ? AND length(nonce) + length(ct) <= ?",
+            arrayOf(ATTACHMENT_FORMAT.toString(), MAX_ROW_BYTES.toString()),
+        ).use { c ->
             buildList {
                 while (c.moveToNext()) add(StoredItem(c.getString(0), c.getInt(1), c.getBlob(2), c.getBlob(3)))
             }
         }
+
+    /**
+     * Dòng mục quá lớn để đọc qua CursorWindow (~2 MB): không đọc (đọc sẽ ném lỗi làm hỏng cả lần mở khóa), chỉ đếm để
+     * báo là mục hỏng. App mới không bao giờ ghi dòng như vậy (giới hạn ở VaultRepository).
+     */
+    fun oversizedEntryCount(): Int =
+        readableDatabase.rawQuery(
+            "SELECT count(*) FROM items WHERE fmt != ? AND length(nonce) + length(ct) > ?",
+            arrayOf(ATTACHMENT_FORMAT.toString(), MAX_ROW_BYTES.toString()),
+        ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
 
     /** id của mọi đoạn file đính kèm (không đọc nội dung). */
     fun attachmentRowIds(): Set<String> =
@@ -164,5 +202,13 @@ class VaultDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
         const val DB_NAME = "vault.db"
         const val DB_VERSION = 1
         const val ATTACHMENT_FORMAT = 2
+        private const val MAX_ROW_BYTES = 1_800_000
+
+        /** Các file vault hỏng đã được giữ lại (xem PreserveOnCorruption). */
+        fun preservedCorruptCopies(context: Context): List<File> {
+            val dir = context.getDatabasePath(DB_NAME).parentFile ?: return emptyList()
+            return dir.listFiles { f -> f.name.startsWith("$DB_NAME.corrupt-") && !f.name.endsWith("-journal") && !f.name.endsWith("-wal") && !f.name.endsWith("-shm") }
+                ?.toList().orEmpty()
+        }
     }
 }

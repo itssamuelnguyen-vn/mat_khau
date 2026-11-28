@@ -31,8 +31,14 @@ import kotlinx.serialization.json.Json
 
 class VaultLockedException : Exception("Vault đang khóa")
 
-/** Vượt giới hạn file đính kèm (thông báo đọc được cho người dùng). */
-class AttachmentLimitException(message: String) : Exception(message)
+/** Lỗi có thông báo viết cho người dùng (hiện nguyên văn). */
+open class UserMessageException(message: String) : Exception(message)
+
+/** Vượt giới hạn file đính kèm. */
+class AttachmentLimitException(message: String) : UserMessageException(message)
+
+/** Mục quá lớn để lưu an toàn (một dòng SQLite phải đọc được qua CursorWindow ~2 MB). */
+class EntryTooLargeException : UserMessageException("Mục quá lớn (tối đa 1 MB chữ). Hãy chuyển nội dung dài sang file đính kèm.")
 
 /** Backup đã giải mã thành công, đang chờ người dùng xác nhận ghi đè. */
 class RestoredBackup internal constructor(
@@ -62,7 +68,8 @@ class RestoredBackup internal constructor(
  * Key mới đã ghi xuống DB mà người dùng không biết, hay mở khóa xong sau khi màn hình đã tắt.
  */
 class VaultRepository(context: Context) {
-    private val db = VaultDatabase(context.applicationContext)
+    private val appContext = context.applicationContext
+    private val db = VaultDatabase(appContext)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val writeMutex = Mutex()
     private val sessionLock = Any()
@@ -106,8 +113,25 @@ class VaultRepository(context: Context) {
     // ---------------------------------------------------------------- tạo / mở / khóa
 
     /** Đọc DB xem đã có vault chưa. Gọi một lần lúc app khởi động. */
+    /**
+     * Vấn đề khi đọc DB lúc khởi động, cho màn hình chào hiện cảnh báo: file vault hỏng đã được giữ lại, hoặc lỗi đọc.
+     * null = bình thường.
+     */
+    private val _loadProblem = MutableStateFlow<String?>(null)
+    val loadProblem: StateFlow<String?> = _loadProblem.asStateFlow()
+
     suspend fun load() = withContext(Dispatchers.IO) {
-        _initialized.value = db.getMeta(KEY_HEADER) != null
+        val hasVault = try {
+            db.getMeta(KEY_HEADER) != null
+        } catch (e: Exception) {
+            _loadProblem.value = "Không đọc được dữ liệu vault trên máy (lỗi bộ nhớ máy?). Đừng tạo vault mới vội: hãy khởi động lại máy rồi mở lại app."
+            _initialized.value = false
+            return@withContext
+        }
+        if (!hasVault && VaultDatabase.preservedCorruptCopies(appContext).isNotEmpty()) {
+            _loadProblem.value = "Vault trên máy bị hỏng nên không mở được. App đã giữ lại file hỏng (không xóa). Hãy khôi phục từ file backup."
+        }
+        _initialized.value = hasVault
     }
 
     /**
@@ -221,6 +245,7 @@ class VaultRepository(context: Context) {
                 // người gọi đưa (có thể là bản chụp cũ của màn tự động điền / màn Sửa, làm mất hoặc "hồi sinh" file).
                 val entry = input.copy(attachments = s.entries.firstOrNull { it.id == input.id }?.attachments.orEmpty())
                 val plain = json.encodeToString(Entry.serializer(), entry).toByteArray(Charsets.UTF_8)
+                if (plain.size > MAX_ENTRY_BYTES) { Bytes.wipe(plain); throw EntryTooLargeException() }
                 val box = try {
                     VaultCrypto.encryptItem(s.key, s.header.vaultId, entry.id, plain)
                 } finally {
@@ -242,15 +267,7 @@ class VaultRepository(context: Context) {
                 val existingIds = _entries.value.map { it.id }.toSet()
                 require(list.none { it.id in existingIds } && list.map { it.id }.toSet().size == list.size) { "Trùng id" }
                 val list = list.map { if (it.attachments.isEmpty()) it else it.copy(attachments = emptyList()) }
-                val items = list.map { e ->
-                    val plain = json.encodeToString(Entry.serializer(), e).toByteArray(Charsets.UTF_8)
-                    try {
-                        val box = VaultCrypto.encryptItem(s.key, s.header.vaultId, e.id, plain)
-                        StoredItem(e.id, ITEM_FORMAT, box.nonce, box.ciphertext)
-                    } finally {
-                        Bytes.wipe(plain)
-                    }
-                }
+                val items = list.map { e -> encryptEntry(s, e) }
                 commitTx(s.generation, write = { items.forEach { db.insertItem(it) } }) {
                     _entries.value = sorted(_entries.value + list)
                 }
@@ -347,6 +364,7 @@ class VaultRepository(context: Context) {
     private fun encryptEntry(s: Session, entry: Entry): StoredItem {
         val plain = json.encodeToString(Entry.serializer(), entry).toByteArray(Charsets.UTF_8)
         try {
+            if (plain.size > MAX_ENTRY_BYTES) throw EntryTooLargeException()
             val box = VaultCrypto.encryptItem(s.key, s.header.vaultId, entry.id, plain)
             return StoredItem(entry.id, ITEM_FORMAT, box.nonce, box.ciphertext)
         } finally {
@@ -497,6 +515,19 @@ class VaultRepository(context: Context) {
                 throw FormatException("Máy không đủ bộ nhớ cho tham số Argon2 của file backup này")
             }
             try {
+                try {
+                    decodeAndVerifyBackup(parsed, key)
+                } catch (e: OutOfMemoryError) {
+                    throw FormatException("Máy không đủ bộ nhớ để kiểm tra file backup này")
+                }
+            } catch (e: Throwable) {
+                Bytes.wipe(key)
+                throw e
+            }
+        }
+
+    private fun decodeAndVerifyBackup(parsed: BackupFormat.Parsed, key: ByteArray): RestoredBackup {
+            run {
                 val plain = BackupFormat.decrypt(parsed, key)
                 val payload = try {
                     json.decodeFromString(BackupPayload.serializer(), String(plain, Charsets.UTF_8))
@@ -517,12 +548,9 @@ class VaultRepository(context: Context) {
                 // File backup có thể do bản khác tạo: giới hạn lịch sử mật khẩu như khi app tự ghi.
                 val entries = payload.entries.map { it.copy(passwordHistory = it.passwordHistory.take(Entry.MAX_HISTORY)) }
                 verifyBackupAttachments(parsed, key, entries)
-                RestoredBackup(parsed.header, key, entries, payload.exportedAt, parsed)
-            } catch (e: Throwable) {
-                Bytes.wipe(key)
-                throw e
+                return RestoredBackup(parsed.header, key, entries, payload.exportedAt, parsed)
             }
-        }
+    }
 
     /**
      * Mọi file đính kèm mà các mục nhắc tới phải có đủ đoạn, giải mã được và đúng SHA-256; file backup không được có
@@ -631,7 +659,9 @@ class VaultRepository(context: Context) {
         try {
             val stored = db.entryItems()
             val entries = ArrayList<Entry>(stored.size)
-            var corrupted = 0
+            // Dòng quá lớn (không đọc được qua CursorWindow) tính là hỏng, thay vì làm hỏng cả lần mở khóa.
+            val oversized = db.oversizedEntryCount()
+            var corrupted = oversized
             for (item in stored) {
                 val entry = try {
                     if (item.format != ITEM_FORMAT) throw DecryptionFailedException()
@@ -647,7 +677,7 @@ class VaultRepository(context: Context) {
                 if (entry == null || entry.id != item.id) corrupted++ else entries.add(entry)
             }
             // Fail securely (spec 5.9), nhưng không bao giờ từ chối một khóa đã được kiểm chứng (xem UnlockPolicy).
-            if (!UnlockPolicy.accept(stored.size, corrupted, keyVerified)) throw WrongSecretException()
+            if (!UnlockPolicy.accept(stored.size + oversized, corrupted, keyVerified)) throw WrongSecretException()
             startSession(key, h, entries, corrupted, gen)
         } catch (e: Throwable) {
             Bytes.wipe(key)
@@ -659,6 +689,12 @@ class VaultRepository(context: Context) {
         synchronized(sessionLock) {
             // Bị khóa (vd. tắt màn hình) trong lúc đang chạy Argon2id: không mở phiên nữa.
             if (generation != gen) throw VaultLockedException()
+            // Đã mở sẵn (vd. app chính và màn tự động điền cùng mở khóa): giữ phiên hiện tại, KHÔNG thay danh sách
+            // mục bằng bản đọc trước đó (có thể thiếu thay đổi vừa ghi, làm bước dọn file tưởng là file mồ côi).
+            if (vek != null) {
+                Bytes.wipe(key)
+                return
+            }
             Bytes.wipe(vek)
             vek = key
             header = h
@@ -715,5 +751,7 @@ class VaultRepository(context: Context) {
         private const val KEY_BIOMETRIC = "biometric_wrapped_vek"
         private const val ITEM_FORMAT = 1
         private const val BACKUP_PAYLOAD_VERSION = 1
+        /** JSON của một mục: 1 MiB (dòng SQLite sau khi mã hóa phải đọc được qua CursorWindow ~2 MB). */
+        private const val MAX_ENTRY_BYTES = 1024 * 1024
     }
 }

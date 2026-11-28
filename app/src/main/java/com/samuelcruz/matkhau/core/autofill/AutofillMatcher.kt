@@ -18,6 +18,12 @@ sealed interface AutofillTarget {
         val certSha256: String?,
         val acceptedCerts: Set<String> = setOfNotNull(certSha256),
         val fromStore: Boolean = false,
+        /**
+         * Tên miền một app KHÔNG phải trình duyệt tự báo (trang web mở trong trình duyệt tích hợp / WebView của Zalo,
+         * Facebook...). Không đủ tin để cho khớp, nhưng dùng để THU HẸP: mục liên kết với app chỉ khớp nếu URL của nó
+         * cũng đúng tên miền này; không liên kết, không điền thẻ.
+         */
+        val webHost: String? = null,
     ) : AutofillTarget
 
     /**
@@ -47,7 +53,7 @@ object AutofillMatcher {
             is AutofillTarget.Web -> DomainMatcher.matches(entry.url, target.host, target.scheme)
             is AutofillTarget.App -> target.certSha256 != null && entry.linkedApps.any { linked ->
                 linked.packageName == target.packageName && target.acceptedCerts.any { it.equals(linked.certSha256, ignoreCase = true) }
-            }
+            } && (target.webHost == null || DomainMatcher.matches(entry.url, target.webHost, null))
             is AutofillTarget.UnverifiedBrowser -> false
         }
     }
@@ -59,7 +65,7 @@ object AutofillMatcher {
      */
     fun cardAllowed(target: AutofillTarget): Boolean = when (target) {
         is AutofillTarget.Web -> !target.scheme.equals("http", ignoreCase = true)
-        is AutofillTarget.App -> target.certSha256 != null
+        is AutofillTarget.App -> target.certSha256 != null && target.webHost == null
         is AutofillTarget.UnverifiedBrowser -> false
     }
 

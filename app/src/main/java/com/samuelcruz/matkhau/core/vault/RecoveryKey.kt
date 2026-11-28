@@ -26,20 +26,29 @@ object RecoveryKey {
      * sửa các ký tự dễ nhầm (0→O, 1→I, 8→B) vì Base32 không dùng 0, 1, 8.
      */
     fun parse(text: String): ByteArray {
-        val cleaned = text.uppercase()
-            .filter { it.isLetterOrDigit() }
-            .map {
-                when (it) {
-                    '0' -> 'O'
-                    '1' -> 'I'
-                    '8' -> 'B'
-                    else -> it
-                }
-            }
-            .joinToString("")
+        val cleaned = normalize(text)
         if (cleaned.length != 32) throw FormatException("Recovery Key phải có 32 ký tự")
         val raw = Base32.decode(cleaned)
         if (raw.size != BYTE_LENGTH) throw FormatException("Recovery Key không hợp lệ")
         return raw
+    }
+
+    /** Bỏ khoảng trắng / gạch, in hoa, 0→O, 1→I, 8→B (Base32 không có 0, 1, 8). */
+    fun normalize(text: String): String = text.uppercase()
+        .filter { it.isLetterOrDigit() }
+        .map {
+            when (it) {
+                '0' -> 'O'
+                '1' -> 'I'
+                '8' -> 'B'
+                else -> it
+            }
+        }
+        .joinToString("")
+
+    /** Bước kiểm tra sau khi chép tay: nhóm [index] (0..7) người dùng gõ lại có khớp key không. */
+    fun groupMatches(key: String, index: Int, typed: String): Boolean {
+        val groups = key.split('-')
+        return index in groups.indices && normalize(typed) == groups[index]
     }
 }

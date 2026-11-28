@@ -135,7 +135,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
-        viewModelScope.launch { biometricEnabled = isBiometricConfigured() }
+        viewModelScope.launch { biometricEnabled = runCatching { isBiometricConfigured() }.getOrDefault(false) }
         viewModelScope.launch {
             // Mỗi lần khóa (kể cả khi đang ở màn hình khôi phục lúc chưa có vault): bỏ toàn bộ trạng thái màn hình
             // có thể chứa dữ liệu nhạy cảm, gồm cả backup đã giải mã.
@@ -281,7 +281,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                     authorized.updateAAD(BiometricKeyManager.aad(vaultId))
                     authorized.doFinal(ct)
                 } catch (e: Exception) {
-                    viewModelScope.launch { disableBiometricInternal() }
+                    viewModelScope.launch { runCatching { disableBiometricInternal() } }
                     formError = "Khóa vân tay không còn khớp vault. Hãy dùng mật khẩu chính rồi bật lại vân tay."
                     return@onSuccess
                 }
@@ -293,6 +293,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                     try {
                         repository.unlockWithKey(key, gen)
                         app.unlockLimiter.reset()   // chủ máy vừa chứng minh bằng vân tay: đếm lại từ đầu
+                        com.samuelcruz.matkhau.security.SecretGuard.noteAuthenticated()
                         afterUnlock()
                     } catch (e: WrongSecretException) {
                         disableBiometricInternal()
@@ -432,9 +433,23 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             formError = "Hãy nhập mật khẩu chính hiện tại"
             return@runBusy
         }
-        if (current != null && !repository.verifyPassword(current)) {
-            formError = "Mật khẩu hiện tại không đúng"
-            return@runBusy
+        if (current != null) {
+            // Người cầm máy đang mở có thể đoán mật khẩu chính ở đây (để mở backup cũ): cùng bộ đếm với màn mở khóa.
+            if (app.unlockLimiter.tryBegin() > 0) {
+                formError = "Nhập sai nhiều lần. Hãy chờ rồi thử lại."
+                return@runBusy
+            }
+            val ok = try {
+                repository.verifyPassword(current)
+            } catch (e: Exception) {
+                app.unlockLimiter.cancel()
+                throw e
+            }
+            if (!ok) {
+                formError = "Mật khẩu hiện tại không đúng"
+                return@runBusy
+            }
+            app.unlockLimiter.reset()
         }
         repository.changePassword(newPassword)
         settings.mustChangePassword = false
@@ -489,9 +504,14 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                     Bytes.wipe(key)
                 }
                 viewModelScope.launch {
-                    repository.setBiometricBlob(blob)
-                    biometricEnabled = true
-                    snackbar = "Đã bật mở khóa bằng vân tay"
+                    try {
+                        repository.setBiometricBlob(blob)
+                        biometricEnabled = true
+                        snackbar = "Đã bật mở khóa bằng vân tay"
+                    } catch (e: Exception) {
+                        biometric.deleteKey()
+                        snackbar = "Bật vân tay thất bại"
+                    }
                 }
             },
             onError = { snackbar = it; biometric.deleteKey() },
@@ -499,8 +519,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun disableBiometric() = viewModelScope.launch {
-        disableBiometricInternal()
-        snackbar = "Đã tắt mở khóa bằng vân tay"
+        snackbar = if (runCatching { disableBiometricInternal() }.isSuccess) "Đã tắt mở khóa bằng vân tay" else "Chưa tắt được vân tay, thử lại"
     }
 
     private suspend fun disableBiometricInternal() {
@@ -619,6 +638,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         decryptedBackup = null
         runBusy("Đang khôi phục…") {
             repository.restore(backup)   // một transaction; meta mới không còn khóa vân tay cũ
+            app.lockNow()   // như mọi lần khóa: hết miễn xác thực 30 giây, bỏ đăng nhập chờ lưu, xóa clipboard
             // Cờ của vault cũ không áp dụng cho vault vừa khôi phục (tránh tự tạo Recovery Key mới, làm key giấy vô hiệu).
             settings.recoveryKeyPending = false
             settings.mustChangePassword = false
@@ -993,6 +1013,10 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 block()
             } catch (e: com.samuelcruz.matkhau.data.VaultLockedException) {
                 snackbar = "Vault đã bị khóa"
+            } catch (e: com.samuelcruz.matkhau.data.UserMessageException) {
+                snackbar = e.message
+            } catch (e: OutOfMemoryError) {
+                snackbar = "Máy không đủ bộ nhớ cho thao tác này"
             } catch (e: Exception) {
                 // Không in tên class (bị R8 đổi thành "a", "b"...) và không in chi tiết có thể chứa dữ liệu.
                 snackbar = "Có lỗi xảy ra, thao tác chưa hoàn tất"

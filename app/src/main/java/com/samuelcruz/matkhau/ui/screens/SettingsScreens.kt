@@ -151,6 +151,11 @@ fun SettingsScreen(vm: VaultViewModel) {
             "Dịch vụ tự động điền",
             if (autofillOn) "Đang dùng Mật Khẩu. Bấm để đổi trong Cài đặt hệ thống" else "Đang tắt. Bấm để chọn Mật Khẩu làm dịch vụ tự động điền",
         ) {
+            if (autofillOn) {
+                // Hệ thống trả về ngay khi app đã là dịch vụ (không hiện gì): chỉ cách đổi.
+                vm.snackbar = "Mật Khẩu đang là dịch vụ tự động điền. Muốn đổi: Cài đặt máy → Mật khẩu và tài khoản → Dịch vụ tự động điền."
+                return@SettingRow
+            }
             vm.suspendAutoLock()
             val intent = Intent(Settings.ACTION_REQUEST_SET_AUTOFILL_SERVICE).setData(Uri.parse("package:${context.packageName}"))
             runCatching { context.startActivity(intent) }.onFailure {
@@ -402,7 +407,7 @@ private fun RestoreBody(vm: VaultViewModel, parsed: com.samuelcruz.matkhau.core.
                 TrackedTextField(
                     secret, { secret = it.uppercase() },
                     label = { Text("Recovery Key của bản backup") },
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = com.samuelcruz.matkhau.ui.components.RecoveryKeyFont),
                     // Kiểu "password": bàn phím không học / gợi ý Recovery Key
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
                     modifier = Modifier.fillMaxWidth(),

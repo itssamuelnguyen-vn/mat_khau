@@ -106,6 +106,9 @@ class AutoBackup(
         } catch (e: Exception) {
             runCatching { DocumentsContract.deleteDocument(resolver, doc) }
             Outcome(false, "Tự backup thất bại (vault bị khóa giữa chừng hoặc hết dung lượng).")
+        } catch (e: OutOfMemoryError) {
+            runCatching { DocumentsContract.deleteDocument(resolver, doc) }
+            Outcome(false, "Máy không đủ bộ nhớ để tự backup.")
         }
     }
 

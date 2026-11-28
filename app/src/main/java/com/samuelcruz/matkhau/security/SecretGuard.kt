@@ -25,6 +25,11 @@ object SecretGuard {
         authenticatedAt = 0L
     }
 
+    /** Vừa mở khóa bằng vân tay: tính là đã xác thực (không hỏi vân tay lần nữa ngay sau đó). */
+    fun noteAuthenticated() {
+        authenticatedAt = SystemClock.elapsedRealtime()
+    }
+
     /**
      * Ưu tiên vân tay / khuôn mặt (trojan không giả được). Chỉ dùng mã PIN / mật khẩu màn hình khóa khi máy không có
      * sinh trắc học (trojan ngân hàng hay ghi lại mã PIN màn hình khóa).
@@ -74,12 +79,16 @@ object SecretGuard {
         if (authenticators and DEVICE_CREDENTIAL != 0) app.autoLock.suspendForSystemPicker()
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                app.autoLock.resume()   // hết hoãn khóa (màn PIN của hệ thống không làm app "quay lại" onStart)
                 if (app.repository.currentGeneration() != lockGeneration) { onDenied(); return }
                 authenticatedAt = SystemClock.elapsedRealtime()
                 action()
             }
 
-            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) = onDenied()
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                app.autoLock.resume()
+                onDenied()
+            }
         }
         val info = BiometricPrompt.PromptInfo.Builder()
             .setTitle("Xác thực để tiếp tục")

@@ -85,6 +85,9 @@ class AutoLockManager(
     override fun onStop(owner: LifecycleOwner) {
         backgroundSince = SystemClock.elapsedRealtime()
         handler.removeCallbacks(lockRunnable)
+        // Chỉ tính là "đang mở trình chọn file / hộp thoại hệ thống" nếu vừa hoãn ngay trước đó. Lượt hoãn cũ không
+        // được dùng (vd. hộp thoại hệ thống không hiện ra, hay màn PIN không làm app rời màn hình) => khóa như thường.
+        if (suspendedSince != 0L && backgroundSince - suspendedSince > SUSPEND_WINDOW_MS) suspendedSince = 0L
         if (suspendedSince != 0L) {
             // Đang ở trình chọn file: vẫn đặt "chốt chặn" khóa sau tối đa 5 phút.
             handler.postDelayed(lockRunnable, MAX_SUSPEND_MS)
@@ -101,6 +104,8 @@ class AutoLockManager(
 
     companion object {
         private const val MAX_SUSPEND_MS = 5 * 60_000L
+        /** Trình chọn file / hộp thoại quyền phải làm app rời màn hình trong khoảng này sau khi hoãn. */
+        private const val SUSPEND_WINDOW_MS = 30_000L
         private const val MAX_PAUSE_MS = 10 * 60_000L
     }
 }

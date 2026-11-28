@@ -148,7 +148,7 @@ class AutofillActivity : FragmentActivity() {
     private fun receiverLabel(s: ParsedScreen): String = when (val t = s.target) {
         is AutofillTarget.Web -> t.host
         is AutofillTarget.UnverifiedBrowser -> t.host
-        is AutofillTarget.App -> AppIdentity.label(this, t.packageName)
+        is AutofillTarget.App -> t.webHost?.let { "$it (trong ${AppIdentity.label(this, t.packageName)})" } ?: AppIdentity.label(this, t.packageName)
     }
 
     override fun onContentChanged() {
@@ -159,6 +159,7 @@ class AutofillActivity : FragmentActivity() {
 
     private fun linkAndFill(entry: Entry): Boolean {
         val target = screen?.target as? AutofillTarget.App ?: return false
+        if (target.webHost != null) return false   // trang web trong app: không bao giờ liên kết
         val cert = target.certSha256 ?: return false
         val updated = entry.copy(
             linkedApps = entry.linkedApps.filterNot { it.packageName == target.packageName } + LinkedApp(target.packageName, cert),
@@ -202,10 +203,11 @@ class AutofillActivity : FragmentActivity() {
             MatKhauAutofillService.sender(context, screen.writeTo(intent(context, MODE_FILL)).putExtra(EXTRA_ENTRY_ID, entryId))
 
         fun pickIntent(context: Context, screen: ParsedScreen): IntentSender =
-            MatKhauAutofillService.sender(context, screen.writeTo(intent(context, MODE_PICK)))
+            // entry_id ghi rõ là null: app kia không chèn được để biến dòng "Chọn mục khác…" thành điền thẳng một mục.
+            MatKhauAutofillService.sender(context, screen.writeTo(intent(context, MODE_PICK)).putExtra(EXTRA_ENTRY_ID, null as String?))
 
         fun saveIntent(context: Context, nonce: String): IntentSender =
-            MatKhauAutofillService.sender(context, intent(context, MODE_SAVE).putExtra(EXTRA_NONCE, nonce))
+            MatKhauAutofillService.sender(context, intent(context, MODE_SAVE).putExtra(EXTRA_NONCE, nonce).putExtra(EXTRA_ENTRY_ID, null as String?))
 
         private fun intent(context: Context, mode: String) =
             Intent(context, AutofillActivity::class.java).putExtra(EXTRA_MODE, mode)

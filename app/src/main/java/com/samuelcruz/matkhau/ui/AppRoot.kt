@@ -89,7 +89,10 @@ fun AppRoot(vm: VaultViewModel) {
         if (unlocked) {
             // Đang chạy tác vụ (lưu, đổi mật khẩu...): chặn Back để stack không bị đổi giữa chừng.
             BackHandler(enabled = vm.stack.size > 1 || vm.busyText != null) { if (vm.busyText == null) vm.back() }
-            when (val screen = vm.stack.lastOrNull() ?: Screen.VaultList) {
+            val current = vm.stack.lastOrNull() ?: Screen.VaultList
+            // key theo màn hình: trạng thái nhớ trong một màn (vd. mật khẩu đang hiện) không bao giờ sang màn khác.
+            androidx.compose.runtime.key(current) {
+            when (val screen = current) {
                 Screen.VaultList -> VaultListScreen(vm)
                 is Screen.Detail -> EntryDetailScreen(vm, screen.id)
                 is Screen.Edit -> EntryEditScreen(vm, screen.id, screen.type)
@@ -103,6 +106,7 @@ fun AppRoot(vm: VaultViewModel) {
                 is Screen.ChangePassword -> ChangePasswordScreen(vm, screen.forced)
                 is Screen.ShowRecoveryKey -> ShowRecoveryKeyScreen(vm, screen.key, screen.firstTime, screen.replacedUnconfirmed)
                 Screen.Restore -> RestoreScreen(vm)
+            }
             }
         } else {
             val loaded by vm.repository.initialized.collectAsState()

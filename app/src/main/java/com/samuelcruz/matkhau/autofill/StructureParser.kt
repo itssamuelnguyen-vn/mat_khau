@@ -11,6 +11,7 @@ import com.samuelcruz.matkhau.core.autofill.AutofillTarget
 import com.samuelcruz.matkhau.core.autofill.FormClassifier
 import com.samuelcruz.matkhau.core.autofill.FormField
 import com.samuelcruz.matkhau.core.autofill.CardForm
+import com.samuelcruz.matkhau.core.autofill.DomainMatcher
 import com.samuelcruz.matkhau.core.autofill.TrustedBrowsers
 
 /** Các ô của form thanh toán thẻ (xem [CardForm]). */
@@ -54,11 +55,13 @@ class ParsedScreen(
         putExtra(X_USERNAME_ID, usernameId)
         putParcelableArrayListExtra(X_PASSWORD_IDS, ArrayList(passwordIds))
         putParcelableArrayListExtra(X_NEW_PASSWORD_IDS, ArrayList(newPasswordIds))
-        card?.let { c ->
-            putExtra(X_CARD_NUMBER, c.number); putExtra(X_CARD_HOLDER, c.holder); putExtra(X_CARD_EXPIRY, c.expiry)
-            putExtra(X_CARD_MONTH, c.expMonth); putExtra(X_CARD_YEAR, c.expYear); putExtra(X_CARD_CVC, c.cvc)
-            putExtra(X_CARD_PATTERN, c.expiryPattern); putExtra(X_CARD_YEAR4, c.fourDigitYear)
-        }
+        // Ghi ĐỦ mọi khóa (null nếu không có): hệ thống chỉ cho app kia THÊM extra chưa có, nên khóa vắng mặt là chỗ
+        // nó chèn được (vd. biến form đăng nhập thành form thẻ). Khóa đã ghi (kể cả null) thì không ghi đè được.
+        val c = card
+        putExtra(X_CARD_NUMBER, c?.number); putExtra(X_CARD_HOLDER, c?.holder); putExtra(X_CARD_EXPIRY, c?.expiry)
+        putExtra(X_CARD_MONTH, c?.expMonth); putExtra(X_CARD_YEAR, c?.expYear); putExtra(X_CARD_CVC, c?.cvc)
+        putExtra(X_CARD_PATTERN, c?.expiryPattern); putExtra(X_CARD_YEAR4, c?.fourDigitYear ?: false)
+        if (target !is AutofillTarget.App) putExtra(X_WEB_HOST, null as String?)
         when (val t = target) {
             is AutofillTarget.Web -> {
                 putExtra(X_KIND, "web"); putExtra(X_HOST, t.host); putExtra(X_SCHEME, t.scheme); putExtra(X_TARGET_PKG, t.browserPackage)
@@ -66,6 +69,7 @@ class ParsedScreen(
             is AutofillTarget.App -> {
                 putExtra(X_KIND, "app"); putExtra(X_TARGET_PKG, t.packageName); putExtra(X_CERT, t.certSha256)
                 putExtra(X_CERTS, t.acceptedCerts.toTypedArray()); putExtra(X_FROM_STORE, t.fromStore)
+                putExtra(X_WEB_HOST, t.webHost)
             }
             is AutofillTarget.UnverifiedBrowser -> {
                 putExtra(X_KIND, "browser?"); putExtra(X_HOST, t.host); putExtra(X_SCHEME, t.scheme)
@@ -88,6 +92,7 @@ class ParsedScreen(
         private const val X_CERTS = "af.certs"
         private const val X_FROM_STORE = "af.from_store"
         private const val X_CERT_CHANGED = "af.cert_changed"
+        private const val X_WEB_HOST = "af.web_host"
         private const val X_CARD_NUMBER = "af.card_number"
         private const val X_CARD_HOLDER = "af.card_holder"
         private const val X_CARD_EXPIRY = "af.card_expiry"
@@ -107,6 +112,7 @@ class ParsedScreen(
                 "app" -> AutofillTarget.App(
                     targetPkg, intent.getStringExtra(X_CERT),
                     intent.getStringArrayExtra(X_CERTS)?.toSet().orEmpty(), intent.getBooleanExtra(X_FROM_STORE, false),
+                    intent.getStringExtra(X_WEB_HOST),
                 )
                 "browser?" -> AutofillTarget.UnverifiedBrowser(
                     intent.getStringExtra(X_HOST) ?: return null, intent.getStringExtra(X_SCHEME), targetPkg,
@@ -141,21 +147,26 @@ object StructureParser {
         val fields = ArrayList<FormField>()
         val ids = HashMap<Int, AutofillId>()
         val values = HashMap<Int, String>()
-        var webDomain: String? = null
-        var webScheme: String? = null
+        // Tên miền của từng ô = tên miền gần nhất phía trên nó (khung / iframe chứa nó), không phải node đầu tiên.
+        val fieldDomain = HashMap<Int, Pair<String, String?>>()
+        var firstDomain: Pair<String, String?>? = null
+        var focused: Int? = null
 
         // Duyệt KHÔNG đệ quy (cây giao diện rất sâu không làm tràn stack); ô nằm trong khung ẩn cũng là ẩn.
-        val stack = ArrayDeque<Pair<AssistStructure.ViewNode, Boolean>>()
-        for (w in structure.windowNodeCount - 1 downTo 0) stack.addLast(structure.getWindowNodeAt(w).rootViewNode to true)
+        class Item(val node: AssistStructure.ViewNode, val parentVisible: Boolean, val domain: Pair<String, String?>?)
+        val stack = ArrayDeque<Item>()
+        for (w in structure.windowNodeCount - 1 downTo 0) stack.addLast(Item(structure.getWindowNodeAt(w).rootViewNode, true, null))
         while (stack.isNotEmpty()) {
-            val (node, parentVisible) = stack.removeLast()
-            val visible = parentVisible && node.visibility == View.VISIBLE
-            node.webDomain?.takeIf { it.isNotBlank() && webDomain == null }?.let {
-                webDomain = it
-                webScheme = node.webScheme
-            }
+            val item = stack.removeLast()
+            val node = item.node
+            val visible = item.parentVisible && node.visibility == View.VISIBLE
+            val own = node.webDomain?.takeIf { it.isNotBlank() }?.let { it to node.webScheme }
+            val domain = own ?: item.domain
+            if (own != null && firstDomain == null) firstDomain = own
             val id = node.autofillId
-            if (visible && id != null && node.autofillType == View.AUTOFILL_TYPE_TEXT) {
+            // Thanh địa chỉ của trình duyệt (compat mode): không phải ô của trang.
+            val isAddressBar = own != null || node.idEntry?.lowercase() in ADDRESS_BAR_IDS
+            if (visible && id != null && node.autofillType == View.AUTOFILL_TYPE_TEXT && !isAddressBar) {
                 val index = fields.size
                 val attrs = node.htmlInfo?.attributes.orEmpty().mapNotNull { p ->
                     val name = p.first?.lowercase() ?: return@mapNotNull null
@@ -174,14 +185,23 @@ object StructureParser {
                         ?: node.maxTextLength.takeIf { it > 0 },
                 )
                 ids[index] = id
+                domain?.let { fieldDomain[index] = it }
+                if (node.isFocused) focused = index
                 if (withValues) node.autofillValue?.takeIf { it.isText }?.textValue?.toString()?.let { values[index] = it }
             }
-            for (i in node.childCount - 1 downTo 0) stack.addLast(node.getChildAt(i) to visible)
+            for (i in node.childCount - 1 downTo 0) stack.addLast(Item(node.getChildAt(i), visible, domain))
         }
 
+        // Tên miền của FORM = của ô đang được chạm (hoặc ô đầu tiên có tên miền); bỏ ô thuộc khung tên miền khác
+        // (iframe quảng cáo / chèn vào trang không được nhận mật khẩu của trang chính).
+        val formDomain = focused?.let { fieldDomain[it] } ?: fields.firstNotNullOfOrNull { fieldDomain[it.index] } ?: firstDomain
+        val webDomain = formDomain?.first
+        val webScheme = formDomain?.second
+        val usable = if (formDomain == null) fields else fields.filter { f -> fieldDomain[f.index].let { it == null || it.first == formDomain.first } }
+
         // Form thanh toán thẻ: các ô thẻ (CVV kiểu password...) không bị coi là ô đăng nhập.
-        val cardForm = FormClassifier.classifyCard(fields)
-        val form = FormClassifier.classify(fields, exclude = cardForm.indices)
+        val cardForm = FormClassifier.classifyCard(usable)
+        val form = FormClassifier.classify(usable, exclude = cardForm.indices)
         val card = cardFields(cardForm, ids)
         val target = targetOf(context, packageName, webDomain, webScheme)
         val newValue = form.newPasswords.firstNotNullOfOrNull { values[it]?.takeIf { v -> v.isNotEmpty() } }
@@ -228,6 +248,9 @@ object StructureParser {
                 AutofillTarget.UnverifiedBrowser(webDomain, webScheme, packageName, identity.current, identity.fromStore, certChanged = pinned != null)
             }
         }
-        return AutofillTarget.App(packageName, identity.current, identity.all, identity.fromStore)
+        // App thường tự báo tên miền (trang web trong trình duyệt tích hợp / WebView): giữ lại để thu hẹp, không để tin.
+        return AutofillTarget.App(packageName, identity.current, identity.all, identity.fromStore, webHost = webDomain?.let { DomainMatcher.hostOf(it) ?: it })
     }
+
+    private val ADDRESS_BAR_IDS = setOf("url_bar", "omnibox", "location_bar", "search_box", "url_field", "address_bar", "mozac_browser_toolbar_url_view")
 }

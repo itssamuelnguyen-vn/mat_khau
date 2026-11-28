@@ -81,7 +81,10 @@ ui/           VaultViewModel (screen stack + all actions), AppRoot (router), scr
   (title, username, URL, category label, tags; never password / TOTP / notes). Items that fail to decrypt are
   counted and reported; a key proven by a key slot (password / Recovery Key) always opens the vault
   (`UnlockPolicy`), only an unverified biometric key with *every* item failing is treated as a wrong key.
-- **Storage:** `vault.db`, `PRAGMA secure_delete=ON`, exactly two tables, no plaintext column:
+- **Storage:** `vault.db`, `PRAGMA secure_delete=ON`, rollback journal (WAL disabled so secure_delete covers old
+  pages), a `DatabaseErrorHandler` that renames a corrupt file to `vault.db.corrupt-<ms>` instead of Android's
+  default delete (Welcome then warns), entry JSON ≤ 1 MiB (rows must fit the ~2 MB CursorWindow; oversized rows are
+  counted as corrupted, never read), exactly two tables, no plaintext column:
   `meta(k TEXT PK, v BLOB)` (`vault_header`, `biometric_wrapped_vek`) and `items(id TEXT PK, fmt INT, nonce BLOB,
   ct BLOB)`. Every DB call is a suspend function on `Dispatchers.IO`; create and restore replace the vault in one
   transaction (`VaultDatabase.replaceVault`). `fmt` 1 = an entry; `fmt` 2 = one chunk of an attachment.
@@ -119,7 +122,12 @@ ui/           VaultViewModel (screen stack + all actions), AppRoot (router), scr
   unlock until done). A Recovery Key screen left without "đã chép" (`recoveryKeyPending`) makes the next unlock
   regenerate and show a new key; that screen keeps the display on and stretches the inactivity timer to 10 min.
   Both flags are cleared by a restore. Regenerating the key invalidates the old one for the vault
-  (old backups still open with the old key). The key screen has no copy button.
+  (old backups still open with the old key). The key screen has no copy button (clipboard history / cloud sync,
+  the key must live off the device); it uses the bundled JetBrains Mono (`res/font`, OFL in `licenses/`) with digits
+  tinted (`recoveryKeyText`) and a note that the alphabet is A–Z + 2–7 only. "In phiếu khẩn cấp" draws an A4 page on a
+  Canvas (`ui/RecoveryKeyPrinter`, PrintManager, no WebView, no app-side temp file; auto-lock suspended while the
+  system print UI is open) after warning against cloud printers / "Save as PDF". Leaving the screen requires typing
+  2 random groups back from paper (`RecoveryKey.groupMatches`, same normalization as `parse`).
 - **Manifest:** INTERNET, ACCESS_NETWORK_STATE, ACCESS_WIFI_STATE removed with `tools:node="remove"`;
   `allowBackup=false`; data extraction rules exclude everything; `configChanges` so secrets never go into
   `savedInstanceState`. CAMERA is requested only when the scan button is pressed.
@@ -160,6 +168,11 @@ ui/           VaultViewModel (screen stack + all actions), AppRoot (router), scr
     same host or a subdomain of the saved host, `www.` ignored, never https→http; no guessed registrable domain.
     A non-matching web entry is blocked; an entry without URL may be given the current domain after a warning.
     Save / assign let the user pick the exact host or a parent (`DomainMatcher.saveCandidates`, never a shared suffix).
+  - In-app web pages (a non-browser app reporting `webDomain`: Zalo / Facebook in-app browsers, WebViews) keep the
+    domain as `AutofillTarget.App.webHost`: it only *narrows* (a linked entry matches only if its URL also matches),
+    never links, never gets cards, and the save flow does not link. Each field takes the domain of its own frame; the
+    form uses the focused field's frame and drops fields from other frames; address-bar nodes are skipped. Every
+    PendingIntent extra is always written (null when unused) because the client can add missing extras.
   - App: only entries the user linked to that package **and** signing cert (`Entry.linkedApps`; cert rotation history
     accepted). Name-based suggestions only for apps installed from a known store; sideloaded apps get a warning.
   - Forms: current vs new password fields are told apart; fill goes to current, save prefers the new value.
